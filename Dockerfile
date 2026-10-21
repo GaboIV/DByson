@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1.7
+
+# ---- Frontend ----
+FROM node:22-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# ---- Backend ----
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY go.mod ./
+RUN go mod download
+COPY . .
+COPY --from=web /web/dist ./web/dist
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/adminbase ./cmd/adminbase
+# Empty data dir owned by the distroless "nonroot" user (uid 65532); mounted as a volume at runtime.
+RUN mkdir /out/data && chmod 700 /out/data
+
+# ---- Runtime ----
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/adminbase /adminbase
+COPY --from=build --chown=65532:65532 /out/data /data
+USER nonroot:nonroot
+VOLUME /data
+ENV ADMINBASE_LISTEN=0.0.0.0:8080 \
+    ADMINBASE_DATA_DIR=/data
+EXPOSE 8080
+ENTRYPOINT ["/adminbase"]

@@ -1,0 +1,52 @@
+# Bases de datos de desarrollo: MySQL 8.4 y MariaDB 11.4 con datos de ejemplo.
+#   docker compose -f docker-compose.dev.yml up -d
+# Credenciales SOLO para desarrollo local.
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: dev-root
+      MYSQL_DATABASE: shop
+    ports:
+      - "127.0.0.1:13306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./deploy/dev/initdb/shared:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-pdev-root"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: dev-root
+      MARIADB_DATABASE: shop
+    ports:
+      - "127.0.0.1:13307:3306"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./deploy/dev/initdb/shared:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # AdminBase empaquetado (perfil opcional): docker compose --profile app up --build
+  adminbase:
+    profiles: ["app"]
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - adminbase-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  mysql-data:
+  mariadb-data:
+  adminbase-data:

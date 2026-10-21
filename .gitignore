@@ -1,0 +1,22 @@
+# Go
+/bin/
+*.test
+*.out
+
+# Web
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+
+# Env / secrets
+.env
+*.pem
+*.key
+/data/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.tsbuildinfo
