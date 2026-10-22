@@ -1,0 +1,8 @@
+version: 2
+
+secret:
+  ignored_paths:
+    - "**/testdata/**"
+    - "**/*_test.go"
+    - "docker-compose.dev.yml"
+    - "deploy/dev/**"
