@@ -124,13 +124,11 @@ export function SecurityDialog({ username, onClose, onChanged }: SecurityProps) 
           {status && (
             <>
               <p className={status.enabled ? "okmsg" : "warn"}>
-                {status.enabled
-                  ? `Activa · ${status.recoveryCodesLeft} códigos de recuperación disponibles`
-                  : "Desactivada"}
+                {status.enabled ? `Activa · ${status.recoveryCodesLeft} códigos de recuperación disponibles` : "Desactivada"}
               </p>
               <p className="muted">
-                Además de la contraseña, se pedirá un código de una app como Google Authenticator, 1Password, Bitwarden o
-                Microsoft Authenticator. {policyNote}
+                Además de la contraseña, se pedirá un código de una app como Google Authenticator, 1Password, Bitwarden o Microsoft
+                Authenticator. {policyNote}
               </p>
               {status.enabled && status.recoveryCodesLeft <= 3 && (
                 <p className="warn">Te quedan pocos códigos de recuperación. Genera unos nuevos.</p>
@@ -160,7 +158,14 @@ export function SecurityDialog({ username, onClose, onChanged }: SecurityProps) 
           <h4>Confirma tu contraseña</h4>
           <label>
             Contraseña actual
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required autoFocus />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+              autoFocus
+            />
           </label>
           {errorLine}
           <div className="actions">
@@ -218,8 +223,8 @@ export function SecurityDialog({ username, onClose, onChanged }: SecurityProps) 
         <div className="settings-section">
           <h4>Guarda tus códigos de recuperación</h4>
           <p className="muted">
-            Si pierdes el teléfono, cada uno de estos códigos te deja entrar una vez. Guárdalos en tu gestor de contraseñas.
-            No se volverán a mostrar.
+            Si pierdes el teléfono, cada uno de estos códigos te deja entrar una vez. Guárdalos en tu gestor de contraseñas. No se volverán
+            a mostrar.
           </p>
           <ol className="recovery-codes">
             {codes.map((c) => (
@@ -254,16 +259,28 @@ export function SecurityDialog({ username, onClose, onChanged }: SecurityProps) 
       {step === "disable" && (
         <form className="settings-section" onSubmit={disable}>
           <h4>Desactivar la verificación en dos pasos</h4>
-          <p className="warn">
-            Se cerrarán tus otras sesiones y dejarás de poder usar conexiones protegidas hasta volver a activarla.
-          </p>
+          <p className="warn">Se cerrarán tus otras sesiones y dejarás de poder usar conexiones protegidas hasta volver a activarla.</p>
           <label>
             Contraseña actual
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required autoFocus />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+              autoFocus
+            />
           </label>
           <label>
             Código de la app o de recuperación
-            <input className="otp-input" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" maxLength={16} required />
+            <input
+              className="otp-input"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              autoComplete="one-time-code"
+              maxLength={16}
+              required
+            />
           </label>
           {errorLine}
           <div className="actions">
@@ -283,7 +300,16 @@ export function SecurityDialog({ username, onClose, onChanged }: SecurityProps) 
           <p className="muted">Los códigos anteriores dejarán de funcionar.</p>
           <label>
             Código de 6 dígitos de la app
-            <input className="otp-input" value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" maxLength={7} required autoFocus />
+            <input
+              className="otp-input"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={7}
+              required
+              autoFocus
+            />
           </label>
           {errorLine}
           <div className="actions">
@@ -436,14 +462,15 @@ export function AuditDialog({ connections, onClose }: { connections: Connection[
               {e.connectionId && ` · ${connectionName(e.connectionId)}`}
               {e.target && ` · ${e.target}`}
             </p>
-            {e.detail && (e.detail.length > 120 || e.detail.includes("\n") ? (
-              <details>
-                <summary>{e.detail.slice(0, 120)}…</summary>
+            {e.detail &&
+              (e.detail.length > 120 || e.detail.includes("\n") ? (
+                <details>
+                  <summary>{e.detail.slice(0, 120)}…</summary>
+                  <pre>{e.detail}</pre>
+                </details>
+              ) : (
                 <pre>{e.detail}</pre>
-              </details>
-            ) : (
-              <pre>{e.detail}</pre>
-            ))}
+              ))}
           </li>
         ))}
       </ol>
@@ -451,8 +478,8 @@ export function AuditDialog({ connections, onClose }: { connections: Connection[
       {loading && <p className="muted">Cargando…</p>}
       {more && !loading && <button onClick={() => void fetchPage(entries[entries.length - 1]?.id)}>Cargar más</button>}
       <p className="muted">
-        Se registran accesos, cambios, consultas SQL y exportaciones; las lecturas de tablas no. Las contraseñas que
-        aparecen en el SQL se ocultan.
+        Se registran accesos, cambios, consultas SQL y exportaciones; las lecturas de tablas no. Las contraseñas que aparecen en el SQL se
+        ocultan.
       </p>
     </Dialog>
   );

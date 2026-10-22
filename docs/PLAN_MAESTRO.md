@@ -187,13 +187,14 @@ docker run -d --name adminbase -p 127.0.0.1:8080:8080 -v adminbase-data:/data ad
 
 Las estimaciones asumen 1 persona a tiempo parcial (~15 h/semana). Con dedicación completa, dividir aprox. entre 2,5.
 
-### Fase 0 — Fundaciones (2–3 semanas)
-- Repositorio (monorepo), licencia, convenciones, ADRs.
-- Esqueleto Go + React embebido; build de imagen Docker distroless.
-- CI: lint, tests, `govulncheck`, Trivy, build multi-arch.
-- Sistema de diseño base (tokens, tema claro/oscuro, componentes).
-- Modelo de amenazas v1.
-- MySQL + MariaDB de prueba en `docker-compose` (con datos de ejemplo tipo Sakila) para desarrollo y tests de integración.
+### Fase 0 — Fundaciones (casi cerrada; falta la primera ejecución del CI)
+- [x] Repositorio, licencia **Apache-2.0** (`LICENSE`, `NOTICE`), formato automático del frontend (Prettier) y [ADRs](adr/README.md).
+- [x] Esqueleto Go + React embebido; imagen Docker distroless no-root.
+- [x] CI: vet, tests con `-race`, `govulncheck`, Prettier, `npm audit`, integración MySQL 8.4 / MariaDB 11.4, build **amd64 + arm64** y Trivy. Workflow de release a GHCR con SBOM, procedencia y firma cosign.
+- [ ] **Primera ejecución del CI en GitHub** (requiere push de la rama).
+- [x] Sistema de diseño base (tokens, temas claro/oscuro).
+- [x] [Modelo de amenazas v1](threat-model.md) (STRIDE).
+- [x] MySQL + MariaDB de prueba en `docker-compose` con datos de ejemplo.
 
 **Entregable:** contenedor que arranca, muestra login y pasa el pipeline de seguridad.
 

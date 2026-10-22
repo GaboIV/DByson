@@ -3,13 +3,11 @@ import { api, setCsrf, type Session } from "./api";
 import { AuthScreen } from "./AuthScreen";
 import { PreferencesProvider } from "./Preferences";
 import { Workbench } from "./Workbench";
+import { Spinner } from "./Spinner";
+import { clearCatalog } from "./workspace/catalog";
 
 type State =
-  | { kind: "loading" }
-  | { kind: "error" }
-  | { kind: "setup"; needsToken: boolean }
-  | { kind: "login" }
-  | { kind: "app"; session: Session };
+  { kind: "loading" } | { kind: "error" } | { kind: "setup"; needsToken: boolean } | { kind: "login" } | { kind: "app"; session: Session };
 
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
@@ -42,13 +40,18 @@ export function App() {
       await api("POST", "/api/auth/logout");
     } finally {
       setCsrf("");
+      clearCatalog();
       setState({ kind: "login" });
     }
   }
 
   switch (state.kind) {
     case "loading":
-      return <main className="center muted">Cargando…</main>;
+      return (
+        <main className="center muted">
+          <Spinner label="Cargando…" />
+        </main>
+      );
     case "error":
       return <main className="center error">No se pudo contactar con el servidor</main>;
     case "setup":
@@ -72,6 +75,12 @@ export function App() {
         />
       );
     case "app":
-      return <div className="layout"><PreferencesProvider key={state.session.username} username={state.session.username}><Workbench session={state.session} onLogout={logout} /></PreferencesProvider></div>;
+      return (
+        <div className="layout">
+          <PreferencesProvider key={state.session.username} username={state.session.username}>
+            <Workbench session={state.session} onLogout={logout} />
+          </PreferencesProvider>
+        </div>
+      );
   }
 }

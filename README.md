@@ -63,3 +63,23 @@ Vistas internas por tabla, cierre con la rueda, opciones, temas e inspector de r
 - **2FA (TOTP):** se activa en *Seguridad* con cualquier app de autenticación. Al activarla se entregan 10 códigos de recuperación de un solo uso y se cierran las demás sesiones. El secreto se guarda cifrado en el vault y cada código solo sirve una vez.
 - **Política:** en modo `personal` (por defecto) la 2FA es opcional: protege poco cuando DByson solo es accesible desde tu máquina. En modo `team` (`ADMINBASE_MODE=team`) las conexiones `prod` y las que usan túnel SSH solo se abren desde una sesión verificada con 2FA.
 - **Auditoría:** se registran inicios de sesión (también fallidos), cambios en conexiones, consultas SQL, cambios de datos y exportaciones. Las lecturas de tablas no se registran. Las filas no se pueden modificar ni borrar por SQL, y cada una lleva un HMAC encadenado con una clave derivada de la clave maestra: *Verificar integridad* detecta ediciones, borrados o reordenamientos en el archivo. Limitación conocida: truncar las últimas entradas no se detecta hasta que exista un anclaje externo del último hash.
+
+## Documentación de diseño
+
+- [Plan maestro](docs/PLAN_MAESTRO.md)
+- [Modelo de amenazas](docs/threat-model.md)
+- [Decisiones de arquitectura (ADR)](docs/adr/README.md)
+
+## Publicar una versión
+
+Al subir una etiqueta `vX.Y.Z`, el workflow `release.yml` publica en `ghcr.io/<owner>/dbyson` una imagen **amd64 + arm64** firmada con cosign, con SBOM y atestación de procedencia.
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Construir localmente para ambas arquitecturas: `docker buildx build --platform linux/amd64,linux/arm64 -t dbyson .`
+
+## Licencia
+
+[Apache License 2.0](LICENSE). Copyright 2026 Gabriel Caraballo.
