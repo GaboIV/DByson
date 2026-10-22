@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/go-sql-driver/mysql v1.10.1
+	github.com/kayrus/putty v1.0.5
 	golang.org/x/crypto v0.58.0
 	modernc.org/sqlite v1.60.1
 )

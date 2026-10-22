@@ -343,3 +343,65 @@ func TestTestEndpointBlocksMetadataHost(t *testing.T) {
 		t.Fatalf("metadata host must be refused by policy: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestExplorerEndpointsRequireAuth(t *testing.T) {
+	e := newTestEnv(t)
+	anon := e.client()
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/api/connections/test-id/databases"},
+		{"GET", "/api/connections/test-id/databases/testdb/tables"},
+		{"GET", "/api/connections/test-id/databases/testdb/tables/users/schema"},
+		{"GET", "/api/connections/test-id/databases/testdb/tables/users/data"},
+		{"GET", "/api/connections/test-id/databases/testdb/tables/users/count"},
+		{"POST", "/api/connections/test-id/databases/testdb/tables/users/row"},
+		{"POST", "/api/connections/test-id/databases/testdb/tables/users/rows"},
+		{"PUT", "/api/connections/test-id/databases/testdb/tables/users/rows"},
+		{"DELETE", "/api/connections/test-id/databases/testdb/tables/users/rows"},
+		{"POST", "/api/connections/test-id/query"},
+		{"GET", "/api/connections/test-id/export?db=testdb"},
+	}
+
+	for _, rt := range routes {
+		rec := anon.do(rt.method, rt.path, nil)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s unauthenticated expected 401, got %d", rt.method, rt.path, rec.Code)
+		}
+	}
+}
+
+func TestExplorerEndpointsReturn404ForUnknownConnection(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.client()
+	e.setupAdmin(c)
+
+	rec := c.do("GET", "/api/connections/non-existent/databases", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown connection, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestQueryDestructiveClassificationCheck(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.client()
+	e.setupAdmin(c)
+
+	create := c.do("POST", "/api/connections", map[string]any{"name": "test-db", "host": "127.0.0.1", "username": "u"})
+	var cv connView
+	_ = json.Unmarshal(create.Body.Bytes(), &cv)
+
+	// Send DROP TABLE without confirmDestructive
+	rec := c.do("POST", "/api/connections/"+cv.ID+"/query", map[string]any{
+		"query":              "DROP TABLE users",
+		"confirmDestructive": false,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with confirmation json, got %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"needsConfirmation":true`) {
+		t.Fatalf("expected needsConfirmation: true, got %s", rec.Body.String())
+	}
+}

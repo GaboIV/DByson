@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adminbase/adminbase/internal/auth"
@@ -23,6 +24,7 @@ type Deps struct {
 }
 
 type Server struct {
+	confirmations sync.Map // short-lived, single-use challenges
 	Deps
 	version  string
 	sessions *auth.Sessions
@@ -62,6 +64,32 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 	mux.Handle("PUT /api/connections/{id}", s.requireAuth(s.updateConnection))
 	mux.Handle("DELETE /api/connections/{id}", s.requireAuth(s.deleteConnection))
 	mux.Handle("POST /api/connections/{id}/test", s.requireAuth(s.testSavedConnection))
+
+	mux.Handle("POST /api/connections/{id}/test-draft", s.requireAuth(s.testDraftConnection))
+	mux.Handle("POST /api/connections/{id}/ssh/fingerprint", s.requireAuth(s.sshFingerprint))
+	mux.Handle("POST /api/ssh/fingerprint", s.requireAuth(s.sshFingerprint))
+	mux.Handle("POST /api/discovery", s.requireAuth(s.discover))
+	mux.Handle("POST /api/connections/transfer/export", s.requireAuth(s.exportProfiles))
+	mux.Handle("POST /api/connections/transfer/import", s.requireAuth(s.importProfiles))
+	// Explorer & Database interaction routes
+	mux.Handle("GET /api/connections/{id}/databases", s.requireAuth(s.handleListDatabases))
+	mux.Handle("POST /api/connections/{id}/databases/create", s.requireAuth(s.handleCreateDatabase))
+	mux.Handle("POST /api/connections/{id}/databases/drop", s.requireAuth(s.handleDropDatabase))
+	mux.Handle("GET /api/connections/{id}/databases/{db}/tables", s.requireAuth(s.handleListTables))
+	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/create", s.requireAuth(s.handleCreateTable))
+	mux.Handle("GET /api/connections/{id}/databases/{db}/tables/{table}/schema", s.requireAuth(s.handleTableSchema))
+	mux.Handle("GET /api/connections/{id}/databases/{db}/tables/{table}/data", s.requireAuth(s.handleTableData))
+	mux.Handle("GET /api/connections/{id}/databases/{db}/tables/{table}/count", s.requireAuth(s.handleTableCount))
+	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/row", s.requireAuth(s.handleRowDetail))
+	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/rows", s.requireAuth(s.handleInsertRow))
+	mux.Handle("PUT /api/connections/{id}/databases/{db}/tables/{table}/rows", s.requireAuth(s.handleUpdateRow))
+	mux.Handle("DELETE /api/connections/{id}/databases/{db}/tables/{table}/rows", s.requireAuth(s.handleDeleteRow))
+	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/batch-delete", s.requireAuth(s.handleBatchDeleteRows))
+	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/truncate", s.requireAuth(s.handleTruncateTable))
+	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/drop", s.requireAuth(s.handleDropTable))
+	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/optimize", s.requireAuth(s.handleOptimizeTable))
+	mux.Handle("POST /api/connections/{id}/query", s.requireAuth(s.handleQuery))
+	mux.Handle("GET /api/connections/{id}/export", s.requireAuth(s.handleExport))
 
 	// Unknown API routes must 404 as JSON, never fall through to the SPA.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {

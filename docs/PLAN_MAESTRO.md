@@ -1,4 +1,8 @@
-# AdminBase — Plan Maestro
+# DByson — Plan Maestro
+
+> **Estado revisado al 21 de octubre de 2026:** fase 1 avanzada, fase 0 parcial, túneles SSH de fase 2 y adelantos de productividad de fase 3. Las funciones presentes no equivalen a una versión validada. Véase [evaluación y prioridades](EVALUACION_2026-10-21.md).
+>
+> **Identidad:** DByson, inspirado en una esfera de Dyson para bases de datos. El producto usa el nuevo nombre; los comandos, el módulo Go y las variables `ADMINBASE_*` conservan sus identificadores por compatibilidad.
 
 > Un IDE web de bases de datos: **la sencillez de Adminer, la potencia de phpMyAdmin, una UX moderna y seguridad por defecto.**
 > Se distribuye como una sola imagen Docker para que cualquier compañero lo levante con un comando.
@@ -44,7 +48,7 @@
    │  HTTPS (TLS 1.3, opcional mTLS con certificado de cliente)
    │  Cookie de sesión HttpOnly + Secure + SameSite=Strict, token CSRF
    ▼
- ┌──────────────────────────── AdminBase (binario Go) ────────────────────────────┐
+ ┌──────────────────────────── DByson (binario Go) ────────────────────────────┐
  │  HTTP API (REST + WebSocket para streaming / cancelar consultas)               │
  │  ├─ Auth: usuarios locales (Argon2id) · TOTP · Passkeys · OIDC (fase 4)        │
  │  ├─ RBAC + Políticas (solo-lectura, entornos, hosts permitidos)                │
@@ -110,11 +114,11 @@ adminbase/
 
 ## 4. Seguridad (el corazón del proyecto)
 
-### 4.1 Acceso a AdminBase
+### 4.1 Acceso a DByson
 - **Usuarios locales** con hash **Argon2id**; bloqueo progresivo por intentos fallidos y rate limiting por IP/usuario.
 - **2FA**: TOTP desde la fase 2; **Passkeys/WebAuthn** como opción preferida.
 - **SSO OIDC** (Google Workspace, Microsoft Entra ID, Keycloak) en modo equipo.
-- **mTLS opcional**: AdminBase puede exigir **certificado de cliente** emitido por una CA propia (`adminbase cert issue --user ana`). Esa es la protección "estilo certificado": sin el certificado instalado, el navegador ni siquiera ve la pantalla de login.
+- **mTLS opcional**: DByson puede exigir **certificado de cliente** emitido por una CA propia (`adminbase cert issue --user ana`). Esa es la protección "estilo certificado": sin el certificado instalado, el navegador ni siquiera ve la pantalla de login.
 - Sesiones: cookie `HttpOnly; Secure; SameSite=Strict`, expiración por inactividad, revocación desde el panel.
 
 ### 4.2 Conexiones a la base de datos
@@ -122,12 +126,12 @@ adminbase/
 - **Túnel SSH**: autenticación por clave (ed25519/RSA, con passphrase), **ssh-agent**, contraseña (desaconsejada), **ProxyJump** (bastión → servidor), keep-alive y reconexión.
 - **Verificación de host key**: TOFU con huella mostrada al usuario y guardada; un cambio de huella **bloquea** la conexión (anti MITM).
 - **`LOAD DATA LOCAL INFILE` deshabilitado** — evita el ataque de "servidor MySQL malicioso" que lee archivos del host (un fallo histórico de herramientas tipo Adminer).
-- **Allowlist de destinos** (hosts/CIDR/puertos permitidos) — evita que AdminBase se use como proxy SSRF hacia la red interna (CVE-2021-21311 en Adminer).
+- **Allowlist de destinos** (hosts/CIDR/puertos permitidos) — evita que DByson se use como proxy SSRF hacia la red interna (CVE-2021-21311 en Adminer).
 - **Vault**: perfiles cifrados con **envelope encryption** — una clave de datos por perfil, envuelta con una clave maestra derivada de una passphrase (Argon2id) o provista por variable de entorno / Docker secret / KMS (futuro).
 
 ### 4.3 Protección contra errores humanos
 - Etiqueta de entorno por conexión (`local`, `dev`, `staging`, `prod`) con color en toda la UI.
-- **Modo solo-lectura** por conexión o por rol (sesión MySQL con `SET SESSION TRANSACTION READ ONLY` + validación del lado de AdminBase).
+- **Modo solo-lectura** por conexión o por rol (sesión MySQL con `SET SESSION TRANSACTION READ ONLY` + validación del lado de DByson).
 - Clasificador de SQL: `DROP`, `TRUNCATE`, `ALTER`, `DELETE/UPDATE` sin `WHERE` → confirmación escribiendo el nombre de la base/tabla.
 - Edición de datos **en lote**: los cambios quedan "pendientes", se muestra el SQL generado y se aplican en **una transacción**.
 - Límite y timeout de consultas configurables; botón de **cancelar consulta** real (`KILL QUERY`).
@@ -141,7 +145,7 @@ adminbase/
 - **Auditoría** inmutable (append-only) de logins y sentencias ejecutadas; exportable a JSON/syslog.
 - Modelo de amenazas (STRIDE) documentado en `docs/threat-model.md` y revisado en cada fase. Pentest/bug bounty antes de la v1.0.
 
-> **Recomendación operativa:** AdminBase nunca debe exponerse a Internet sin mTLS, SSO o una VPN/zero-trust (Tailscale, Cloudflare Access) delante. El modo por defecto escucha en `127.0.0.1`.
+> **Recomendación operativa:** DByson nunca debe exponerse a Internet sin mTLS, SSO o una VPN/zero-trust (Tailscale, Cloudflare Access) delante. El modo por defecto escucha en `127.0.0.1`.
 
 ---
 
@@ -170,10 +174,10 @@ docker run -d --name adminbase -p 127.0.0.1:8080:8080 -v adminbase-data:/data ad
 - Para conectar a un MySQL en tu propia máquina desde el contenedor: `host.docker.internal`.
 
 ### Modo equipo
-- Un AdminBase compartido (servidor interno o VPS detrás de VPN) con **usuarios, roles y conexiones compartidas**:
+- Un DByson compartido (servidor interno o VPS detrás de VPN) con **usuarios, roles y conexiones compartidas**:
   - Roles: `owner`, `admin`, `developer` (lectura/escritura en no-prod), `analyst` (solo lectura), `viewer`.
   - Permisos por conexión y por entorno ("María puede escribir en dev, solo leer en prod").
-- **Compartir sin servidor**: exportar perfiles de conexión como archivo cifrado `.abx` (cifrado con passphrase vía `age`); el compañero lo importa en su propio AdminBase. Las claves SSH pueden excluirse para que cada uno use la suya.
+- **Compartir sin servidor**: exportar perfiles de conexión como archivo cifrado `.abx` (cifrado con passphrase vía `age`); el compañero lo importa en su propio DByson. Las claves SSH pueden excluirse para que cada uno use la suya.
 - `docker-compose.yml` de referencia con Caddy/Traefik para HTTPS automático.
 - Configuración por variables de entorno y Docker secrets (`ADMINBASE_MASTER_KEY_FILE`, `ADMINBASE_ALLOWED_HOSTS`, `ADMINBASE_OIDC_*`).
 
@@ -193,22 +197,22 @@ Las estimaciones asumen 1 persona a tiempo parcial (~15 h/semana). Con dedicaci�
 
 **Entregable:** contenedor que arranca, muestra login y pasa el pipeline de seguridad.
 
-### Fase 1 — MVP MySQL (6–8 semanas)
-- Login de usuario local (Argon2id), setup inicial del primer admin.
-- Vault cifrado y CRUD de perfiles de conexión.
-- Conexión directa a MySQL/MariaDB con TLS (`VERIFY_IDENTITY`, CA propia).
-- Explorador: bases, tablas, vistas; estructura de tabla.
-- Grilla de datos con paginación por cursor, filtros, orden, edición inline con lote + transacción.
-- Editor SQL con autocompletado, múltiples resultados, historial, cancelación.
-- Exportar CSV/JSON/SQL.
-- Etiquetas de entorno, confirmación de sentencias destructivas, `LOAD DATA LOCAL` deshabilitado, allowlist de hosts.
+### Fase 1 — MVP MySQL (avanzada; cierre pendiente de validación)
+- [x] Login de usuario local (Argon2id), setup inicial del primer admin.
+- [x] Vault cifrado (XChaCha20-Poly1305) y CRUD de perfiles de conexión.
+- [x] Conexión directa a MySQL/MariaDB con TLS (`VERIFY_IDENTITY`, CA propia).
+- [x] Explorador: bases de datos, tablas y vistas; estructura de tabla (columnas, tipos, claves, índices, DDL).
+- [x] Grilla de datos con paginación, filtros por columna, ordenamiento por cabecera, inserción, edición y eliminación de registros.
+- [x] Consola SQL con ejecución directa (`Ctrl+Enter`), estadísticas de tiempo/filas, atajos de consulta, historial y clasificador con confirmación de sentencias destructivas (`DROP`, `TRUNCATE`, `UPDATE`/`DELETE` sin `WHERE`).
+- [x] Exportación SQL/CSV/JSON por streaming, selección explícita de tabla para CSV/JSON y errores de descarga detectables. Restauración SQL básica validada en MySQL 8.4 y MariaDB 11.4.
+- [x] Etiquetas de entorno, solo lectura en cada sesión física y política conservadora en servidor, archivos locales deshabilitados y allowlist. Filtros estructurados sin SQL libre.
 
-**Entregable:** `v0.1.0` en Docker Hub — ya usable en el día a día en lugar de Adminer.
+**Entregable objetivo (no certificado):** `v0.1.0` en Docker, tras cerrar las brechas y pruebas de aceptación de la evaluación.
 
 ### Fase 2 — Conectividad segura (4–5 semanas)
-- Túnel SSH: clave, passphrase, ssh-agent, contraseña; verificación de host key; ProxyJump.
-- Certificados de cliente MySQL.
-- mTLS para acceder a AdminBase (+ CLI para emitir certificados de cliente).
+- [x] Túnel SSH: OpenSSH/PPK v2/v3, passphrase, ssh-agent del servidor y contraseña; huella fijada explícitamente; bastión opcional, keepalive y cancelación. Véase [SSH y espacios de trabajo](SSH_Y_ESPACIOS.md).
+- Certificados de cliente MySQL: implementación presente; pendiente validación de integración.
+- mTLS para acceder a DByson (+ CLI para emitir certificados de cliente).
 - TOTP 2FA, gestión de sesiones activas.
 - Auditoría v1.
 
@@ -218,7 +222,8 @@ Las estimaciones asumen 1 persona a tiempo parcial (~15 h/semana). Con dedicaci�
 - Editor visual de estructura (crear/alterar tablas, índices, FKs) con vista previa del DDL.
 - Importación CSV/SQL con streaming y barra de progreso.
 - EXPLAIN visual, diagrama ER, navegación por FKs.
-- Consultas guardadas, snippets, paleta de comandos, pestañas persistentes.
+- [x] Paleta de comandos y pestañas independientes; se restauran destinos al recargar. Borradores/resultados solo en memoria de sesión.
+- [ ] Consultas guardadas, snippets y persistencia optativa de borradores.
 - Gestión de usuarios y permisos de MySQL (`GRANT`), lista de procesos (`SHOW PROCESSLIST` + kill).
 - Passkeys/WebAuthn.
 
@@ -226,7 +231,8 @@ Las estimaciones asumen 1 persona a tiempo parcial (~15 h/semana). Con dedicaci�
 
 ### Fase 4 — Equipos (5–6 semanas)
 - Multiusuario con RBAC y permisos por conexión/entorno.
-- Conexiones compartidas y exportación/importación `.abx` cifrada.
+- [x] Exportación/importación personal `.dbyson`, con credenciales cifradas opcionales y claves SSH separadas.
+- [ ] Conexiones compartidas del equipo con permisos y administración central.
 - SSO OIDC.
 - Auditoría avanzada (filtros, exportación, retención) y modo solo-lectura forzado por rol.
 - Helm chart / guía de despliegue detrás de VPN o Cloudflare Access.
@@ -260,7 +266,7 @@ Las estimaciones asumen 1 persona a tiempo parcial (~15 h/semana). Con dedicaci�
 | Diferencias entre versiones de MySQL/MariaDB | Matriz de tests de integración desde la fase 1. |
 | Resultados enormes que tumban el navegador o el servidor | Streaming, paginación por cursor, límites por defecto, virtualización. |
 | Tipos complicados (BLOB, JSON, GEOMETRY, fechas cero, charsets) | Representación tipada en la API, visores dedicados, tests específicos. |
-| El nombre "AdminBase" ya en uso | Verificar marca, dominio (`adminbase.dev`/`.io`), namespace de Docker Hub y org de GitHub antes de publicar. |
+| El nombre "DByson" ya en uso | Verificar marca, dominio (`adminbase.dev`/`.io`), namespace de Docker Hub y org de GitHub antes de publicar. |
 
 ---
 
@@ -273,7 +279,9 @@ Las estimaciones asumen 1 persona a tiempo parcial (~15 h/semana). Con dedicaci�
 ---
 
 ## 11. Próximos pasos inmediatos
-1. Confirmar stack (Go + React recomendado) y licencia (MIT/Apache-2.0 si será open source; propietaria si es interna).
-2. Reservar nombre: org de GitHub, namespace de Docker Hub, dominio.
-3. Ejecutar la **Fase 0**: scaffolding del repo, Dockerfile, CI y `docker-compose` de desarrollo con MySQL/MariaDB.
-4. Escribir los primeros ADRs: stack, modelo de cifrado del vault, interfaz de drivers.
+1. Brechas de implementación del MVP cerradas: solo lectura reforzado, resultados limitados, streaming y confirmaciones contextuales. Véase [detalle y pruebas](MVP_SEGURIDAD.md).
+2. Validar flujos integrados en MySQL/MariaDB y reconciliar CSP con la interfaz.
+3. Completar licencia, ADRs y modelo de amenazas; verificar CI antes de publicar `v0.1.0`.
+4. Experiencia de consulta implementada: filtros con Mostrar, cancelación, conteo opcional, copia y detalle de registros. Véase [comportamiento y validación](EXPERIENCIA_CONSULTA.md). Implementado además SSH y revisión del inicio/asistente/pestañas, detección Docker y perfiles compartibles. Véase [SSH y espacios de trabajo](SSH_Y_ESPACIOS.md). Vistas internas agrupadas por tabla, cierre con rueda, preferencias/temas, historial de sesión, modo Sólo ver e inspector implementados: [interfaz y preferencias](INTERFAZ_Y_PREFERENCIAS.md). Después: auditoría, TOTP, consultas guardadas y editor SQL avanzado.
+
+El detalle, evidencia y criterios de cierre están en [Evaluación del 21 de octubre de 2026](EVALUACION_2026-10-21.md).

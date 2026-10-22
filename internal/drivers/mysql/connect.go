@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"net"
@@ -45,6 +46,7 @@ type Config struct {
 	ClientCert string // PEM
 	ClientKey  string // PEM
 	Timeout    time.Duration
+	ReadOnly   bool
 }
 
 // BuildTLS returns the *tls.Config for cfg, or nil when TLS is disabled.
@@ -136,11 +138,36 @@ func Open(cfg Config, dial Dialer) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db := sql.OpenDB(connector)
+	var configured driver.Connector = connector
+	if cfg.ReadOnly {
+		configured = readOnlyConnector{connector}
+	}
+	db := sql.OpenDB(configured)
 	db.SetMaxOpenConns(5)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(10 * time.Minute)
 	return db, nil
+}
+
+// Configure every physical connection, not just one arbitrary pool checkout.
+// Fail closed if the server cannot enforce the requested session access mode.
+type readOnlyConnector struct{ driver.Connector }
+
+func (c readOnlyConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	conn, err := c.Connector.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	exec, ok := conn.(driver.ExecerContext)
+	if !ok {
+		conn.Close()
+		return nil, errors.New("driver cannot configure read-only sessions")
+	}
+	if _, err := exec.ExecContext(ctx, "SET SESSION TRANSACTION READ ONLY", nil); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("enforce read-only session: %w", err)
+	}
+	return conn, nil
 }
 
 type TestResult struct {

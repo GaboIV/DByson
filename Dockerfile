@@ -6,6 +6,8 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+# The frontend imports the shared project logo from the repository root.
+COPY logo.png /logo.png
 RUN npm run build
 
 # ---- Backend ----
@@ -17,12 +19,14 @@ COPY . .
 COPY --from=web /web/dist ./web/dist
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/adminbase ./cmd/adminbase
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/docker-discovery ./cmd/docker-discovery
 # Empty data dir owned by the distroless "nonroot" user (uid 65532); mounted as a volume at runtime.
 RUN mkdir /out/data && chmod 700 /out/data
 
 # ---- Runtime ----
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/adminbase /adminbase
+COPY --from=build /out/docker-discovery /docker-discovery
 COPY --from=build --chown=65532:65532 /out/data /data
 USER nonroot:nonroot
 VOLUME /data

@@ -1,0 +1,35 @@
+# Optional local deployment with automatic Docker metadata discovery.
+# Build first: docker build -t adminbase:dev .
+services:
+  app:
+    image: adminbase:dev
+    container_name: adminbase
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:8080"
+    volumes:
+      - adminbase-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      ADMINBASE_DOCKER_DISCOVERY_URL: http://discovery:8090
+    networks: [default, discovery]
+  discovery:
+    image: adminbase:dev
+    entrypoint: ["/docker-discovery"]
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    pids_limit: 32
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [discovery]
+networks:
+  discovery:
+    internal: true
+volumes:
+  adminbase-data:
+    external: true

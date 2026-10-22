@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/adminbase/adminbase/internal/drivers/mysql"
+	"github.com/adminbase/adminbase/internal/tunnel"
 )
 
 var validEnvs = map[string]bool{"local": true, "dev": true, "staging": true, "prod": true}
@@ -20,26 +21,28 @@ var validEnvs = map[string]bool{"local": true, "dev": true, "staging": true, "pr
 // connInput is the request body for create/update/test. Secret fields are pointers:
 // nil keeps the stored value on update, "" clears it, anything else replaces it.
 type connInput struct {
-	Name       string  `json:"name"`
-	Env        string  `json:"env"`
-	Host       string  `json:"host"`
-	Port       int     `json:"port"`
-	Username   string  `json:"username"`
-	Database   string  `json:"database"`
-	TLSMode    string  `json:"tlsMode"`
-	ReadOnly   bool    `json:"readOnly"`
-	Password   *string `json:"password"`
-	CACert     *string `json:"caCert"`
-	ClientCert *string `json:"clientCert"`
-	ClientKey  *string `json:"clientKey"`
+	SSH        *tunnel.Config `json:"ssh,omitempty"`
+	Name       string         `json:"name"`
+	Env        string         `json:"env"`
+	Host       string         `json:"host"`
+	Port       int            `json:"port"`
+	Username   string         `json:"username"`
+	Database   string         `json:"database"`
+	TLSMode    string         `json:"tlsMode"`
+	ReadOnly   bool           `json:"readOnly"`
+	Password   *string        `json:"password"`
+	CACert     *string        `json:"caCert"`
+	ClientCert *string        `json:"clientCert"`
+	ClientKey  *string        `json:"clientKey"`
 }
 
 // secretBlob is what gets encrypted in the vault. Nothing in it is ever returned by the API.
 type secretBlob struct {
-	Password   string `json:"password,omitempty"`
-	CACert     string `json:"caCert,omitempty"`
-	ClientCert string `json:"clientCert,omitempty"`
-	ClientKey  string `json:"clientKey,omitempty"`
+	SSH        tunnel.Config `json:"ssh"`
+	Password   string        `json:"password,omitempty"`
+	CACert     string        `json:"caCert,omitempty"`
+	ClientCert string        `json:"clientCert,omitempty"`
+	ClientKey  string        `json:"clientKey,omitempty"`
 }
 
 type connRecord struct {
@@ -60,20 +63,21 @@ type connRecord struct {
 }
 
 type connView struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Env           string `json:"env"`
-	Host          string `json:"host"`
-	Port          int    `json:"port"`
-	Username      string `json:"username"`
-	Database      string `json:"database"`
-	TLSMode       string `json:"tlsMode"`
-	ReadOnly      bool   `json:"readOnly"`
-	HasPassword   bool   `json:"hasPassword"`
-	HasCACert     bool   `json:"hasCaCert"`
-	HasClientCert bool   `json:"hasClientCert"`
-	CreatedAt     int64  `json:"createdAt"`
-	UpdatedAt     int64  `json:"updatedAt"`
+	SSH           tunnel.Config `json:"ssh"`
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	Env           string        `json:"env"`
+	Host          string        `json:"host"`
+	Port          int           `json:"port"`
+	Username      string        `json:"username"`
+	Database      string        `json:"database"`
+	TLSMode       string        `json:"tlsMode"`
+	ReadOnly      bool          `json:"readOnly"`
+	HasPassword   bool          `json:"hasPassword"`
+	HasCACert     bool          `json:"hasCaCert"`
+	HasClientCert bool          `json:"hasClientCert"`
+	CreatedAt     int64         `json:"createdAt"`
+	UpdatedAt     int64         `json:"updatedAt"`
 }
 
 func newID() string {
@@ -127,13 +131,20 @@ func (in *connInput) driverConfig(sec secretBlob) mysql.Config {
 	return mysql.Config{
 		Host: in.Host, Port: in.Port, User: in.Username, Database: in.Database,
 		Password: sec.Password, TLSMode: in.TLSMode,
-		CACert: sec.CACert, ClientCert: sec.ClientCert, ClientKey: sec.ClientKey,
+		ReadOnly: in.ReadOnly,
+		CACert:   sec.CACert, ClientCert: sec.ClientCert, ClientKey: sec.ClientKey,
 	}
 }
 
 // applySecrets merges the input's secret fields over base and checks the TLS material parses.
 func (in *connInput) applySecrets(base secretBlob) (secretBlob, string) {
 	out := base
+	if in.SSH != nil {
+		out.SSH = tunnel.Merge(*in.SSH, base.SSH)
+	}
+	if err := out.SSH.Validate(); err != nil {
+		return out, err.Error()
+	}
 	if in.Password != nil {
 		out.Password = *in.Password
 	}
@@ -154,7 +165,7 @@ func (in *connInput) applySecrets(base secretBlob) (secretBlob, string) {
 
 func view(rec *connRecord, sec secretBlob) connView {
 	return connView{
-		ID: rec.ID, Name: rec.Name, Env: rec.Env, Host: rec.Host, Port: rec.Port,
+		SSH: sec.SSH.Redacted(), ID: rec.ID, Name: rec.Name, Env: rec.Env, Host: rec.Host, Port: rec.Port,
 		Username: rec.Username, Database: rec.Database, TLSMode: rec.TLSMode, ReadOnly: rec.ReadOnly,
 		HasPassword: sec.Password != "", HasCACert: sec.CACert != "", HasClientCert: sec.ClientCert != "" && sec.ClientKey != "",
 		CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt,
@@ -349,10 +360,11 @@ type testResponse struct {
 	Result *mysql.TestResult `json:"result,omitempty"`
 }
 
-func (s *Server) runTest(w http.ResponseWriter, r *http.Request, cfg mysql.Config) {
+func (s *Server) runTest(w http.ResponseWriter, r *http.Request, cfg mysql.Config, sec secretBlob) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	res, err := mysql.Test(ctx, cfg, s.Policy.DirectDialer(10*time.Second))
+	cfg.ReadOnly = cfg.ReadOnly || r.Header.Get("X-DByson-Read-Only") == "1"
+	res, err := mysql.Test(ctx, cfg, s.connectionDialer(sec))
 	if err != nil {
 		writeJSON(w, http.StatusOK, testResponse{OK: false, Error: err.Error()})
 		return
@@ -366,8 +378,8 @@ func (s *Server) testSavedConnection(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	in := connInput{Host: rec.Host, Port: rec.Port, Username: rec.Username, Database: rec.Database, TLSMode: rec.TLSMode}
-	s.runTest(w, r, in.driverConfig(sec))
+	in := connInput{Host: rec.Host, Port: rec.Port, Username: rec.Username, Database: rec.Database, TLSMode: rec.TLSMode, ReadOnly: rec.ReadOnly}
+	s.runTest(w, r, in.driverConfig(sec), sec)
 }
 
 // testDraftConnection tests a profile that has not been saved yet.
@@ -383,10 +395,57 @@ func (s *Server) testDraftConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
-	sec, msg := in.applySecrets(secretBlob{})
+	base := secretBlob{}
+	if r.PathValue("id") != "" {
+		_, stored, err := s.loadOwned(r.Context(), r)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		base = stored
+	}
+	sec, msg := in.applySecrets(base)
 	if msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
-	s.runTest(w, r, in.driverConfig(sec))
+	s.runTest(w, r, in.driverConfig(sec), sec)
+}
+
+func (s *Server) connectionDialer(sec secretBlob) mysql.Dialer {
+	if sec.SSH.Enabled {
+		return tunnel.Dialer(sec.SSH, s.Policy)
+	}
+	return s.Policy.DirectDialer(10 * time.Second)
+}
+func (s *Server) sshFingerprint(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Host string      `json:"host"`
+		Port int         `json:"port"`
+		User string      `json:"user"`
+		Jump *tunnel.Hop `json:"jump,omitempty"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.Port == 0 {
+		in.Port = 22
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if r.PathValue("id") != "" {
+		_, sec, err := s.loadOwned(ctx, r)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		merged := tunnel.Merge(tunnel.Config{Jump: in.Jump}, sec.SSH)
+		in.Jump = merged.Jump
+	}
+	observation, err := tunnel.ObserveVia(ctx, tunnel.Hop{Host: in.Host, Port: in.Port, User: in.User}, in.Jump, s.Policy)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, observation)
 }

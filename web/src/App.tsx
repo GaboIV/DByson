@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, setCsrf, type Session } from "./api";
 import { AuthScreen } from "./AuthScreen";
-import { Connections } from "./Connections";
+import { PreferencesProvider } from "./Preferences";
+import { Workbench } from "./Workbench";
 
 type State =
   | { kind: "loading" }
@@ -51,22 +52,26 @@ export function App() {
     case "error":
       return <main className="center error">No se pudo contactar con el servidor</main>;
     case "setup":
-      return <AuthScreen mode="setup" needsToken={state.needsToken} onSession={(session) => setState({ kind: "app", session })} />;
-    case "login":
-      return <AuthScreen mode="login" needsToken={false} onSession={(session) => setState({ kind: "app", session })} />;
-    case "app":
       return (
-        <div className="layout">
-          <header className="topbar">
-            <strong className="brand">AdminBase</strong>
-            <span className="spacer" />
-            <span className="muted">{state.session.username}</span>
-            <button onClick={logout}>Salir</button>
-          </header>
-          <main className="content">
-            <Connections />
-          </main>
-        </div>
+        <AuthScreen
+          mode="setup"
+          needsToken={state.needsToken}
+          onSession={(session) => {
+            setState({ kind: "app", session });
+          }}
+        />
       );
+    case "login":
+      return (
+        <AuthScreen
+          mode="login"
+          needsToken={false}
+          onSession={(session) => {
+            setState({ kind: "app", session });
+          }}
+        />
+      );
+    case "app":
+      return <div className="layout"><PreferencesProvider key={state.session.username} username={state.session.username}><Workbench session={state.session} onLogout={logout} /></PreferencesProvider></div>;
   }
 }

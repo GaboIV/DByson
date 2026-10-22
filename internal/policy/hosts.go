@@ -42,6 +42,23 @@ func ParseAllowlist(s string) (*HostPolicy, error) {
 
 func (p *HostPolicy) restricted() bool { return len(p.names) > 0 || len(p.prefixes) > 0 }
 
+// CheckRemote checks a name resolved by a trusted SSH server, rather than local DNS.
+// CIDR restrictions require a literal IP; named destinations require an explicit name entry.
+func (p *HostPolicy) CheckRemote(host string) error {
+	host = strings.ToLower(host)
+	if ip, err := netip.ParseAddr(host); err == nil {
+		ip = ip.Unmap()
+		if alwaysBlocked(ip) || (p.restricted() && !p.names[host] && !p.inPrefix(ip)) {
+			return fmt.Errorf("remote destination %q is not allowed by policy", host)
+		}
+		return nil
+	}
+	if p.restricted() && !p.names[host] {
+		return fmt.Errorf("remote destination %q requires an explicit allowlist entry", host)
+	}
+	return nil
+}
+
 // Check returns the IPs of host that are allowed to be dialed.
 func (p *HostPolicy) Check(ctx context.Context, host string) ([]netip.Addr, error) {
 	host = strings.ToLower(host)

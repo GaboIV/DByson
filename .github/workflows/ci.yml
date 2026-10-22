@@ -38,9 +38,41 @@ jobs:
       - run: npm run build
       - run: npm audit --audit-level=high
 
+  mysql-integration:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: mysql:8.4
+            health: mysqladmin ping -h 127.0.0.1 -pdbyson-tests
+          - image: mariadb:11.4
+            health: healthcheck.sh --connect --innodb_initialized
+    services:
+      database:
+        image: ${{ matrix.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: dbyson-tests
+          MYSQL_ROOT_HOST: "%"
+          MARIADB_ROOT_PASSWORD: dbyson-tests
+          MARIADB_ROOT_HOST: "%"
+        ports:
+          - 3306/tcp
+        options: >-
+          --health-cmd="${{ matrix.health }}"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - run: go test ./internal/drivers/mysql -run TestIntegration -count=1 -v
+        env:
+          DBYSON_INTEGRATION_ADDR: 127.0.0.1:${{ job.services.database.ports[3306] }}
+
   image:
     runs-on: ubuntu-latest
-    needs: [backend, frontend]
+    needs: [backend, frontend, mysql-integration]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
