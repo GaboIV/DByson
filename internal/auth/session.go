@@ -24,6 +24,7 @@ type Session struct {
 	Username string
 	Role     string
 	CSRF     string
+	MFA      bool // the session was established (or upgraded) with a second factor
 }
 
 // Sessions persists sessions in SQLite. Only a SHA-256 of the token is stored, so a leaked
@@ -49,7 +50,7 @@ func hashToken(token string) string {
 }
 
 // Create starts a session and returns the raw token (for the cookie) and the CSRF token.
-func (s *Sessions) Create(ctx context.Context, userID int64) (token, csrf string, err error) {
+func (s *Sessions) Create(ctx context.Context, userID int64, mfa bool) (token, csrf string, err error) {
 	if token, err = randomToken(); err != nil {
 		return
 	}
@@ -58,8 +59,8 @@ func (s *Sessions) Create(ctx context.Context, userID int64) (token, csrf string
 	}
 	now := s.Now().Unix()
 	_, err = s.DB.ExecContext(ctx,
-		`INSERT INTO sessions (id_hash, user_id, csrf, created_at, last_seen, expires_at) VALUES (?,?,?,?,?,?)`,
-		hashToken(token), userID, csrf, now, now, now+int64(AbsoluteTimeout.Seconds()))
+		`INSERT INTO sessions (id_hash, user_id, csrf, created_at, last_seen, expires_at, mfa) VALUES (?,?,?,?,?,?,?)`,
+		hashToken(token), userID, csrf, now, now, now+int64(AbsoluteTimeout.Seconds()), mfa)
 	return
 }
 
@@ -72,9 +73,9 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (*Session, error) {
 	var sess Session
 	var lastSeen, expires int64
 	err := s.DB.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.role, s.csrf, s.last_seen, s.expires_at
+		SELECT u.id, u.username, u.role, s.csrf, s.mfa, s.last_seen, s.expires_at
 		FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ?`, h).
-		Scan(&sess.UserID, &sess.Username, &sess.Role, &sess.CSRF, &lastSeen, &expires)
+		Scan(&sess.UserID, &sess.Username, &sess.Role, &sess.CSRF, &sess.MFA, &lastSeen, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoSession
 	}
@@ -90,6 +91,19 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (*Session, error) {
 		_, _ = s.DB.ExecContext(ctx, `UPDATE sessions SET last_seen = ? WHERE id_hash = ?`, now, h)
 	}
 	return &sess, nil
+}
+
+// SetMFA marks the session identified by token as verified with a second factor.
+func (s *Sessions) SetMFA(ctx context.Context, token string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE sessions SET mfa = 1 WHERE id_hash = ?`, hashToken(token))
+	return err
+}
+
+// DeleteOthers revokes every session of the user except the one identified by token.
+// Used when the account's authentication factors change.
+func (s *Sessions) DeleteOthers(ctx context.Context, userID int64, token string) error {
+	_, err := s.DB.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?`, userID, hashToken(token))
+	return err
 }
 
 func (s *Sessions) Delete(ctx context.Context, token string) error {

@@ -213,8 +213,8 @@ Las estimaciones asumen 1 persona a tiempo parcial (~15 h/semana). Con dedicaci�
 - [x] Túnel SSH: OpenSSH/PPK v2/v3, passphrase, ssh-agent del servidor y contraseña; huella fijada explícitamente; bastión opcional, keepalive y cancelación. Véase [SSH y espacios de trabajo](SSH_Y_ESPACIOS.md).
 - Certificados de cliente MySQL: implementación presente; pendiente validación de integración.
 - mTLS para acceder a DByson (+ CLI para emitir certificados de cliente).
-- TOTP 2FA, gestión de sesiones activas.
-- Auditoría v1.
+- [x] TOTP 2FA (RFC 6238) con códigos de recuperación de un solo uso, login en dos pasos y política `ADMINBASE_REQUIRE_MFA` (por defecto exige 2FA para `prod` y SSH). Gestión de sesiones activas: pendiente (por ahora, activar o desactivar 2FA revoca las demás sesiones).
+- [x] Auditoría v1: registro append-only (triggers) con cadena HMAC verificable, accesos, cambios, consultas SQL (con contraseñas ocultas) y exportaciones; visor en la interfaz. Pendiente: retención, exportación a syslog/JSON y anclaje externo del último hash.
 
 **Entregable:** `v0.2.0` — apto para conectar a servidores remotos y producción de forma segura.
 

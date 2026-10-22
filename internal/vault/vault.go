@@ -3,7 +3,9 @@
 package vault
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -103,6 +105,14 @@ func (v *Vault) Open(id string, wrappedDEK, ciphertext []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decrypt secret: %w", err)
 	}
 	return pt, nil
+}
+
+// DeriveKey returns a 32-byte subkey of the master key for a single purpose (e.g. audit MACs),
+// so the master key itself is never used outside the vault.
+func (v *Vault) DeriveKey(label string) []byte {
+	mac := hmac.New(sha256.New, v.kek[:])
+	mac.Write([]byte("adminbase/v1/derive/" + label))
+	return mac.Sum(nil)
 }
 
 func seal(key, plaintext, aad []byte) ([]byte, error) {

@@ -2,6 +2,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public code?: string,
   ) {
     super(message);
   }
@@ -38,17 +39,50 @@ export async function api<T>(method: string, path: string, body?: unknown, optio
   if(body&&typeof body==="object"&&"database" in body&&typeof body.database==="string")queryDatabase=body.database;
   else {const part=new URL(path,location.origin).pathname.split("/databases/")[1]?.split("/")[0];if(part){try{queryDatabase=decodeURIComponent(part);}catch{queryDatabase=part;}}}
   if(typeof sql === "string" && sql && path.startsWith("/api/connections/")) window.dispatchEvent(new CustomEvent("dbyson-query",{detail:{id:crypto.randomUUID(),sql:sql.slice(0,12000),truncated:sql.length>12000,database:queryDatabase,path,at:Date.now(),ms:Math.round(performance.now()-started),ok:res.ok&&data.ok!==false}}));
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error ?? `Error ${res.status}`);
+  if (!res.ok) {
+    const { error, code } = data as { error?: string; code?: string };
+    // Let the shell offer 2FA setup wherever the refusal happens.
+    if (code === "mfa_required") window.dispatchEvent(new CustomEvent("dbyson-mfa-required"));
+    throw new ApiError(res.status, error ?? `Error ${res.status}`, code);
+  }
   return data as T;
 }
 
 export type Env = "local" | "dev" | "staging" | "prod";
 export type TLSMode = "disabled" | "required" | "verify_ca" | "verify_identity";
 
+export type MFAPolicy = "off" | "sensitive" | "all";
+
 export interface Session {
   username: string;
   role: string;
   csrf: string;
+  mfa: boolean; // this session was verified with a second factor
+  mfaEnabled: boolean;
+  mfaPolicy: MFAPolicy;
+}
+
+export type LoginResponse = Session | { mfaRequired: true; mfaToken: string };
+
+export interface MFAStatus {
+  enabled: boolean;
+  recoveryCodesLeft: number;
+  policy: MFAPolicy;
+  sessionVerified: boolean;
+}
+
+export interface AuditEntry {
+  id: number;
+  at: number;
+  userId?: number;
+  username: string;
+  ip: string;
+  action: string;
+  connectionId?: string;
+  target?: string;
+  detail?: string;
+  outcome: "ok" | "error" | "denied" | "confirmation_requested";
+  hash: string;
 }
 
 export interface SSHHop {

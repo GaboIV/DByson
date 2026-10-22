@@ -218,6 +218,10 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "connection not found")
 		return
 	}
+	if errors.Is(err, errMFARequired) {
+		writeMFARequired(w)
+		return
+	}
 	writeError(w, http.StatusInternalServerError, "internal error")
 }
 
@@ -274,6 +278,7 @@ func (s *Server) createConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := newID()
+	auditFrom(r).entry.ConnectionID = id
 	wrapped, sealed, err := s.sealSecret(id, sec)
 	if err != nil {
 		s.fail(w, err)
@@ -374,6 +379,9 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request, cfg mysql.Confi
 
 func (s *Server) testSavedConnection(w http.ResponseWriter, r *http.Request) {
 	rec, sec, err := s.loadOwned(r.Context(), r)
+	if err == nil {
+		err = s.mfaGate(r, rec.Env, sec.SSH.Enabled)
+	}
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -407,6 +415,10 @@ func (s *Server) testDraftConnection(w http.ResponseWriter, r *http.Request) {
 	sec, msg := in.applySecrets(base)
 	if msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+	if err := s.mfaGate(r, in.Env, sec.SSH.Enabled); err != nil {
+		s.fail(w, err)
 		return
 	}
 	s.runTest(w, r, in.driverConfig(sec), sec)

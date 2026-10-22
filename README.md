@@ -33,6 +33,7 @@ Por defecto el binario escucha solo en `127.0.0.1:8080` (`ADMINBASE_LISTEN` para
 | `ADMINBASE_MASTER_KEY` / `ADMINBASE_MASTER_KEY_FILE` | — | Clave maestra del vault (base64, 32 bytes). Si no se define, se genera `master.key` en el directorio de datos. **En producción guárdala fuera del volumen de datos** (Docker secret). |
 | `ADMINBASE_ALLOWED_HOSTS` | vacío (todo permitido salvo link-local) | Lista separada por comas de hosts, IPs o CIDR a los que DByson puede conectarse. |
 | `ADMINBASE_SETUP_TOKEN` | — | Si se define, es obligatorio para crear el primer administrador. |
+| `ADMINBASE_REQUIRE_MFA` | `sensitive` | Cuándo se exige verificación en dos pasos: `off` (opcional), `sensitive` (conexiones `prod` y túneles SSH, incluida su exportación con credenciales) o `all` (todo salvo el inicio de sesión y la propia configuración de 2FA). |
 
 Generar una clave maestra: `openssl rand -base64 32`.
 
@@ -55,3 +56,9 @@ Filtros aplicados con Mostrar, cargas cancelables, paginación sin conteo obliga
 Túneles con OpenSSH/PPK, bastión, asistente de conexión, pestañas, paleta Ctrl+K, detección Docker y perfiles compartibles. Véase [guía y límites](docs/SSH_Y_ESPACIOS.md). Para descubrimiento Docker con un componente de metadatos aislado: [compose local](deploy/docker-compose.local.yml).
 
 Vistas internas por tabla, cierre con la rueda, opciones, temas e inspector de registros: [guía de interfaz](docs/INTERFAZ_Y_PREFERENCIAS.md).
+
+## Verificación en dos pasos y auditoría
+
+- **2FA (TOTP):** se activa en *Seguridad* con cualquier app de autenticación. Al activarla se entregan 10 códigos de recuperación de un solo uso y se cierran las demás sesiones. El secreto se guarda cifrado en el vault y cada código solo sirve una vez.
+- **Política:** con `ADMINBASE_REQUIRE_MFA=sensitive` (por defecto) las conexiones `prod` y las que usan túnel SSH solo se abren desde una sesión verificada con 2FA.
+- **Auditoría:** se registran inicios de sesión (también fallidos), cambios en conexiones, consultas SQL, cambios de datos y exportaciones. Las lecturas de tablas no se registran. Las filas no se pueden modificar ni borrar por SQL, y cada una lleva un HMAC encadenado con una clave derivada de la clave maestra: *Verificar integridad* detecta ediciones, borrados o reordenamientos en el archivo. Limitación conocida: truncar las últimas entradas no se detecta hasta que exista un anclaje externo del último hash.

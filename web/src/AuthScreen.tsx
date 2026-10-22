@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api, ApiError, setCsrf, type Session } from "./api";
+import { api, ApiError, setCsrf, type LoginResponse, type Session } from "./api";
 import { Brand } from "./Brand";
 
 interface Props {
@@ -14,24 +14,81 @@ export function AuthScreen({ mode, needsToken, onSession }: Props) {
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [mfaToken, setMfaToken] = useState("");
+  const [code, setCode] = useState("");
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const s = await api<Session>("POST", mode === "setup" ? "/api/setup" : "/api/auth/login", {
-        username,
-        password,
-        ...(mode === "setup" && needsToken ? { setupToken: token } : {}),
-      });
-      setCsrf(s.csrf);
-      onSession(s);
+      const res = mfaToken
+        ? await api<LoginResponse>("POST", "/api/auth/mfa/verify", { mfaToken, code })
+        : await api<LoginResponse>("POST", mode === "setup" ? "/api/setup" : "/api/auth/login", {
+            username,
+            password,
+            ...(mode === "setup" && needsToken ? { setupToken: token } : {}),
+          });
+      if ("mfaRequired" in res) {
+        setMfaToken(res.mfaToken);
+        setPassword("");
+        return;
+      }
+      setCsrf(res.csrf);
+      onSession(res);
     } catch (err) {
+      // An expired or exhausted challenge sends the user back to the password step.
+      if (mfaToken && err instanceof ApiError && err.message.includes("expiró")) {
+        setMfaToken("");
+        setCode("");
+      }
       setError(err instanceof ApiError ? err.message : "No se pudo contactar con el servidor");
     } finally {
       setBusy(false);
     }
+  }
+
+  if (mfaToken) {
+    return (
+      <main className="auth-page">
+        <form className="card auth" onSubmit={submit}>
+          <h1>Verificación en dos pasos</h1>
+          <p className="muted">Escribe el código de 6 dígitos de tu app de autenticación, o uno de tus códigos de recuperación.</p>
+          <label>
+            Código
+            <input
+              className="otp-input"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              autoComplete="one-time-code"
+              autoCapitalize="none"
+              spellCheck={false}
+              maxLength={16}
+              required
+              autoFocus
+            />
+          </label>
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          <button className="primary" disabled={busy}>
+            Verificar
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMfaToken("");
+              setCode("");
+              setError("");
+            }}
+          >
+            Volver
+          </button>
+        </form>
+      </main>
+    );
   }
 
   return (

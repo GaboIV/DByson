@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -50,6 +51,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	mfaPolicy := env("ADMINBASE_REQUIRE_MFA", api.MFAPolicySensitive)
+	if !api.ValidMFAPolicy(mfaPolicy) {
+		return fmt.Errorf("ADMINBASE_REQUIRE_MFA must be off, sensitive or all (got %q)", mfaPolicy)
+	}
 	pol, err := policy.ParseAllowlist(os.Getenv("ADMINBASE_ALLOWED_HOSTS"))
 	if err != nil {
 		return err
@@ -62,6 +67,7 @@ func run(log *slog.Logger) error {
 			Vault:      v,
 			Policy:     pol,
 			SetupToken: os.Getenv("ADMINBASE_SETUP_TOKEN"),
+			MFAPolicy:  mfaPolicy,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
