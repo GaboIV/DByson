@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -51,10 +52,16 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	mfaPolicy := env("ADMINBASE_REQUIRE_MFA", api.MFAPolicySensitive)
-	if !api.ValidMFAPolicy(mfaPolicy) {
-		return fmt.Errorf("ADMINBASE_REQUIRE_MFA must be off, sensitive or all (got %q)", mfaPolicy)
+	mode := env("ADMINBASE_MODE", modePersonal)
+	mfaPolicy, err := resolveMFAPolicy(mode, os.Getenv("ADMINBASE_REQUIRE_MFA"))
+	if err != nil {
+		return err
 	}
+	if mode == modePersonal && !isLoopback(addr) {
+		log.Warn("personal mode without required 2FA: publish the port on 127.0.0.1 only, or set ADMINBASE_MODE=team",
+			"addr", addr)
+	}
+	log.Info("security policy", "mode", mode, "mfa", mfaPolicy)
 	pol, err := policy.ParseAllowlist(os.Getenv("ADMINBASE_ALLOWED_HOSTS"))
 	if err != nil {
 		return err
@@ -97,6 +104,45 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("adminbase stopped")
 	return nil
+}
+
+// Deployment modes. Inside Docker the server always listens on 0.0.0.0 even when the port is
+// only published on the host's loopback, so exposure cannot be detected and is declared instead.
+const (
+	modePersonal = "personal" // one person on their own machine: 2FA available, not required
+	modeTeam     = "team"     // reachable by others over a network: 2FA required for prod and SSH
+)
+
+// resolveMFAPolicy applies an explicit ADMINBASE_REQUIRE_MFA, or the mode's default.
+func resolveMFAPolicy(mode, explicit string) (string, error) {
+	var def string
+	switch mode {
+	case modePersonal:
+		def = api.MFAPolicyOff
+	case modeTeam:
+		def = api.MFAPolicySensitive
+	default:
+		return "", fmt.Errorf("ADMINBASE_MODE must be personal or team (got %q)", mode)
+	}
+	if explicit == "" {
+		return def, nil
+	}
+	if !api.ValidMFAPolicy(explicit) {
+		return "", fmt.Errorf("ADMINBASE_REQUIRE_MFA must be off, sensitive or all (got %q)", explicit)
+	}
+	return explicit, nil
+}
+
+func isLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func env(key, fallback string) string {

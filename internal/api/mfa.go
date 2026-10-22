@@ -20,8 +20,8 @@ import (
 )
 
 // MFA policies (ADMINBASE_REQUIRE_MFA):
-//   - off:       2FA is optional everywhere.
-//   - sensitive: (default) prod connections and SSH tunnels need a session verified with 2FA.
+//   - off:       (default in personal mode) 2FA is optional everywhere.
+//   - sensitive: (default in team mode) prod connections and SSH tunnels need a session verified with 2FA.
 //   - all:       every API call beyond login/2FA setup needs a 2FA-verified session.
 const (
 	MFAPolicyOff       = "off"
