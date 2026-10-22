@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/gaboiv/dbyson/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,11 @@ import (
 )
 
 const keySize = chacha20poly1305.KeySize
+
+// cryptoDomain prefixes every associated-data and key-derivation label. It keeps the product's
+// original name on purpose: it is bound into every stored ciphertext and audit MAC, so changing it
+// would make existing credentials undecryptable and break the audit chain. Never rename it.
+const cryptoDomain = "adminbase/v1/"
 
 type Vault struct {
 	kek [keySize]byte
@@ -32,16 +38,16 @@ func New(masterKey []byte) (*Vault, error) {
 }
 
 // LoadKey resolves the master key, in order of precedence:
-//  1. ADMINBASE_MASTER_KEY      (base64, 32 bytes)
-//  2. ADMINBASE_MASTER_KEY_FILE (file containing the base64 key; works with Docker secrets)
+//  1. DBYSON_MASTER_KEY      (base64, 32 bytes)
+//  2. DBYSON_MASTER_KEY_FILE (file containing the base64 key; works with Docker secrets)
 //  3. <dataDir>/master.key      (generated on first run with mode 0600)
 //
 // For a real deployment prefer 1 or 2 so the key is not stored next to the encrypted data.
 func LoadKey(dataDir string) ([]byte, error) {
-	if v := strings.TrimSpace(os.Getenv("ADMINBASE_MASTER_KEY")); v != "" {
+	if v := strings.TrimSpace(config.Get("MASTER_KEY")); v != "" {
 		return decodeKey(v)
 	}
-	if f := os.Getenv("ADMINBASE_MASTER_KEY_FILE"); f != "" {
+	if f := config.Get("MASTER_KEY_FILE"); f != "" {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			return nil, fmt.Errorf("read master key file: %w", err)
@@ -85,22 +91,22 @@ func (v *Vault) Seal(id string, plaintext []byte) (wrappedDEK, ciphertext []byte
 	}
 	defer zero(dek)
 
-	if wrappedDEK, err = seal(v.kek[:], dek, []byte("adminbase/v1/dek/"+id)); err != nil {
+	if wrappedDEK, err = seal(v.kek[:], dek, []byte(cryptoDomain+"dek/"+id)); err != nil {
 		return nil, nil, err
 	}
-	if ciphertext, err = seal(dek, plaintext, []byte("adminbase/v1/secret/"+id)); err != nil {
+	if ciphertext, err = seal(dek, plaintext, []byte(cryptoDomain+"secret/"+id)); err != nil {
 		return nil, nil, err
 	}
 	return wrappedDEK, ciphertext, nil
 }
 
 func (v *Vault) Open(id string, wrappedDEK, ciphertext []byte) ([]byte, error) {
-	dek, err := open(v.kek[:], wrappedDEK, []byte("adminbase/v1/dek/"+id))
+	dek, err := open(v.kek[:], wrappedDEK, []byte(cryptoDomain+"dek/"+id))
 	if err != nil {
 		return nil, fmt.Errorf("unwrap data key: %w", err)
 	}
 	defer zero(dek)
-	pt, err := open(dek, ciphertext, []byte("adminbase/v1/secret/"+id))
+	pt, err := open(dek, ciphertext, []byte(cryptoDomain+"secret/"+id))
 	if err != nil {
 		return nil, fmt.Errorf("decrypt secret: %w", err)
 	}
@@ -111,7 +117,7 @@ func (v *Vault) Open(id string, wrappedDEK, ciphertext []byte) ([]byte, error) {
 // so the master key itself is never used outside the vault.
 func (v *Vault) DeriveKey(label string) []byte {
 	mac := hmac.New(sha256.New, v.kek[:])
-	mac.Write([]byte("adminbase/v1/derive/" + label))
+	mac.Write([]byte(cryptoDomain + "derive/" + label))
 	return mac.Sum(nil)
 }
 

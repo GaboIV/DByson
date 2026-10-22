@@ -10,10 +10,10 @@ La idea inicial era deducirlo de la dirección de escucha, pero **dentro de Dock
 
 ## Decisión
 
-- Variable `ADMINBASE_MODE`:
+- Variable `DBYSON_MODE`:
   - `personal` (por defecto): 2FA disponible y opcional.
   - `team`: 2FA obligatoria para usar conexiones `prod`, túneles SSH y exportar sus credenciales.
-- `ADMINBASE_REQUIRE_MFA` (`off` | `sensitive` | `all`) fuerza la política y gana sobre el modo.
+- `DBYSON_REQUIRE_MFA` (`off` | `sensitive` | `all`) fuerza la política y gana sobre el modo.
 - Si el modo es `personal` y el servidor escucha fuera de loopback, se avisa en el log.
 - La auditoría está activa en ambos modos.
 

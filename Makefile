@@ -5,14 +5,14 @@ web:
 	touch web/dist/.gitkeep
 
 build: web
-	CGO_ENABLED=0 go build -trimpath -o bin/adminbase ./cmd/adminbase
+	CGO_ENABLED=0 go build -trimpath -o bin/dbyson ./cmd/dbyson
 
 test:
 	go vet ./...
 	go test ./...
 
 run: build
-	./bin/adminbase
+	./bin/dbyson
 
 dev-db:
 	docker compose -f docker-compose.dev.yml up -d mysql mariadb
@@ -21,4 +21,4 @@ dev-db-down:
 	docker compose -f docker-compose.dev.yml down
 
 docker:
-	docker build -t adminbase:dev .
+	docker build -t dbyson:dev .

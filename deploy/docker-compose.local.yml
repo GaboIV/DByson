@@ -1,21 +1,21 @@
 # Optional local deployment with automatic Docker metadata discovery.
-# Build first: docker build -t adminbase:dev .
+# Build first: docker build -t dbyson:dev .
 services:
   app:
-    image: adminbase:dev
-    container_name: adminbase
+    image: dbyson:dev
+    container_name: dbyson
     restart: unless-stopped
     ports:
       - "127.0.0.1:8082:8080"
     volumes:
-      - adminbase-data:/data
+      - dbyson-data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      ADMINBASE_DOCKER_DISCOVERY_URL: http://discovery:8090
+      DBYSON_DOCKER_DISCOVERY_URL: http://discovery:8090
     networks: [default, discovery]
   discovery:
-    image: adminbase:dev
+    image: dbyson:dev
     entrypoint: ["/docker-discovery"]
     user: "0:0"
     read_only: true
@@ -31,5 +31,5 @@ networks:
   discovery:
     internal: true
 volumes:
-  adminbase-data:
+  dbyson-data:
     external: true

@@ -15,11 +15,11 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
-	"github.com/adminbase/adminbase/internal/audit"
-	"github.com/adminbase/adminbase/internal/auth"
+	"github.com/gaboiv/dbyson/internal/audit"
+	"github.com/gaboiv/dbyson/internal/auth"
 )
 
-// MFA policies (ADMINBASE_REQUIRE_MFA):
+// MFA policies (DBYSON_REQUIRE_MFA):
 //   - off:       (default in personal mode) 2FA is optional everywhere.
 //   - sensitive: (default in team mode) prod connections and SSH tunnels need a session verified with 2FA.
 //   - all:       every API call beyond login/2FA setup needs a 2FA-verified session.

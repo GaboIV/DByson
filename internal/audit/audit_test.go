@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adminbase/adminbase/internal/store"
+	"github.com/gaboiv/dbyson/internal/store"
 )
 
 func newLogger(t *testing.T) (*Logger, string) {
@@ -52,7 +52,7 @@ func TestVerifyDetectsTampering(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		l.Record(ctx, Entry{Username: "ana", Action: "query.execute", Detail: "SELECT 1"})
 	}
-	raw, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, "adminbase.db")))
+	raw, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, store.FileName)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestVerifyDetectsDeletion(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		l.Record(ctx, Entry{Username: "ana", Action: "x"})
 	}
-	raw, _ := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, "adminbase.db")))
+	raw, _ := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, store.FileName)))
 	defer raw.Close()
 	raw.Exec(`DROP TRIGGER audit_log_no_delete`)
 	raw.Exec(`DELETE FROM audit_log WHERE id = 2`)

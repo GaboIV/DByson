@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -22,10 +23,63 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	}
 }
 
+// An installation from before the rename (adminbase.db, still in WAL mode with pending pages)
+// must be adopted as dbyson.db without losing rows.
+func TestAdoptsLegacyFileName(t *testing.T) {
+	dir := t.TempDir()
+	old, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	if err := os.Rename(filepath.Join(dir, FileName), filepath.Join(dir, legacyFileName)); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, legacyFileName))+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO users (username, password_hash, created_at) VALUES ('legacy', 'x', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var n int
+	if err := st.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE username = 'legacy'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("legacy rows not carried over: n=%d err=%v", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, legacyFileName)); !os.IsNotExist(err) {
+		t.Fatal("legacy file should have been renamed")
+	}
+}
+
+// When both names exist (e.g. a backup copied back), the new file wins and nothing is touched.
+func TestKeepsNewFileWhenBothExist(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := Open(dir)
+	st.Close()
+	if err := os.WriteFile(filepath.Join(dir, legacyFileName), []byte("not a database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	if _, err := os.Stat(filepath.Join(dir, legacyFileName)); err != nil {
+		t.Fatal("legacy file must be left alone when the new one exists")
+	}
+}
+
 // A database created before versioning (user_version 0, original tables present) must upgrade.
 func TestUpgradesPreVersioningDatabase(t *testing.T) {
 	dir := t.TempDir()
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, "adminbase.db")))
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, legacyFileName)))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,10 +10,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/adminbase/adminbase/internal/auth"
-	"github.com/adminbase/adminbase/internal/policy"
-	"github.com/adminbase/adminbase/internal/store"
-	"github.com/adminbase/adminbase/internal/vault"
+	"github.com/gaboiv/dbyson/internal/auth"
+	"github.com/gaboiv/dbyson/internal/policy"
+	"github.com/gaboiv/dbyson/internal/store"
+	"github.com/gaboiv/dbyson/internal/vault"
 )
 
 type testEnv struct {

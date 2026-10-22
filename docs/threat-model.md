@@ -73,7 +73,7 @@ Estado: ✅ implementado · 🟡 parcial · ⬜ pendiente.
 | Amenaza | Mitigación | Estado |
 |---|---|---|
 | Credenciales en respuestas de la API | La API solo expone indicadores (`hasPassword`…), nunca secretos | ✅ |
-| Robo del volumen o de una copia de seguridad | Credenciales cifradas; **pero** si `master.key` está en el mismo volumen, el cifrado no protege esa copia. Usar `ADMINBASE_MASTER_KEY_FILE` (Docker secret) | 🟡 |
+| Robo del volumen o de una copia de seguridad | Credenciales cifradas; **pero** si `master.key` está en el mismo volumen, el cifrado no protege esa copia. Usar `DBYSON_MASTER_KEY_FILE` (Docker secret) | 🟡 |
 | Servidor MySQL malicioso lee archivos locales (`LOAD DATA LOCAL`) | Deshabilitado en el driver | ✅ |
 | Contraseñas en el SQL auditado | Redacción de `IDENTIFIED BY`, `PASSWORD(...)`, etc. | ✅ |
 | Usuario ve conexiones de otro | Cada perfil filtrado por propietario; 404 para ajenos | ✅ |
@@ -94,7 +94,7 @@ Estado: ✅ implementado · 🟡 parcial · ⬜ pendiente.
 
 | Amenaza | Mitigación | Estado |
 |---|---|---|
-| Usar DByson como pivote SSRF hacia la red interna o el endpoint de metadatos de la nube | Link-local siempre bloqueado; lista blanca `ADMINBASE_ALLOWED_HOSTS`; resolución DNS una sola vez (anti rebinding) | ✅ |
+| Usar DByson como pivote SSRF hacia la red interna o el endpoint de metadatos de la nube | Link-local siempre bloqueado; lista blanca `DBYSON_ALLOWED_HOSTS`; resolución DNS una sola vez (anti rebinding) | ✅ |
 | Escribir en una conexión de solo lectura | `SET SESSION TRANSACTION READ ONLY` en cada conexión física + lista de sentencias permitidas | ✅ (la barrera real es un usuario MySQL sin permisos de escritura) |
 | Acceso al socket de Docker (= root en el host) | Sidecar aislado en red interna, solo dos GET de lectura con campos filtrados; opcional | ✅ |
 | Contenedor comprometido escala al host | Imagen distroless, usuario no-root, sin shell; recomendado `read_only` y `cap_drop: ALL` | ✅ |

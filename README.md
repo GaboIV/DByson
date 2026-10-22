@@ -3,7 +3,7 @@
 IDE web de bases de datos: la sencillez de Adminer, la potencia de phpMyAdmin, UX moderna y seguridad por defecto.
 Plan completo en [docs/PLAN_MAESTRO.md](docs/PLAN_MAESTRO.md). Evaluación del avance y prioridades en [docs/EVALUACION_2026-10-21.md](docs/EVALUACION_2026-10-21.md).
 
-DByson toma su visión de una esfera de Dyson para bases de datos. Actualmente implementa MySQL/MariaDB. Los comandos y las variables `ADMINBASE_*` conservan sus nombres por compatibilidad.
+DByson toma su visión de una esfera de Dyson para bases de datos. Actualmente implementa MySQL/MariaDB. Antes se llamó AdminBase: ver [Migrar desde AdminBase](#migrar-desde-adminbase).
 
 ## Desarrollo
 
@@ -12,29 +12,29 @@ Requisitos: Go 1.26+, Node 22+, Docker.
 ```bash
 make dev-db                       # MySQL 8.4 (:13306) y MariaDB 11.4 (:13307), root / dev-root, base `shop`
 cd web && npm ci && npm run dev   # frontend en :5173 (proxy /api -> :8080)
-go run ./cmd/adminbase            # API en 127.0.0.1:8080
+go run ./cmd/dbyson            # API en 127.0.0.1:8080
 ```
 
 ## Imagen Docker
 
 ```bash
 make docker
-docker run --rm -p 127.0.0.1:8080:8080 adminbase:dev
+docker run --rm -p 127.0.0.1:8080:8080 dbyson:dev
 ```
 
-Por defecto el binario escucha solo en `127.0.0.1:8080` (`ADMINBASE_LISTEN` para cambiarlo); la imagen lo expone en `0.0.0.0` dentro del contenedor, así que publica el puerto solo en loopback como arriba.
+Por defecto el binario escucha solo en `127.0.0.1:8080` (`DBYSON_LISTEN` para cambiarlo); la imagen lo expone en `0.0.0.0` dentro del contenedor, así que publica el puerto solo en loopback como arriba.
 
 ## Configuración (variables de entorno)
 
 | Variable | Por defecto | Descripción |
 |---|---|---|
-| `ADMINBASE_LISTEN` | `127.0.0.1:8080` | Dirección de escucha. |
-| `ADMINBASE_DATA_DIR` | `./data` (`/data` en Docker) | SQLite interno (usuarios, sesiones, perfiles cifrados). |
-| `ADMINBASE_MASTER_KEY` / `ADMINBASE_MASTER_KEY_FILE` | — | Clave maestra del vault (base64, 32 bytes). Si no se define, se genera `master.key` en el directorio de datos. **En producción guárdala fuera del volumen de datos** (Docker secret). |
-| `ADMINBASE_ALLOWED_HOSTS` | vacío (todo permitido salvo link-local) | Lista separada por comas de hosts, IPs o CIDR a los que DByson puede conectarse. |
-| `ADMINBASE_SETUP_TOKEN` | — | Si se define, es obligatorio para crear el primer administrador. |
-| `ADMINBASE_MODE` | `personal` | `personal`: una persona en su propia máquina (2FA disponible pero no obligatoria). `team`: DByson accesible por red para varias personas (2FA obligatoria para `prod` y SSH). |
-| `ADMINBASE_REQUIRE_MFA` | según el modo | Fuerza la política: `off` (opcional), `sensitive` (conexiones `prod` y túneles SSH, incluida su exportación con credenciales) o `all` (todo salvo el inicio de sesión y la propia configuración de 2FA). Si se define, gana sobre el modo. |
+| `DBYSON_LISTEN` | `127.0.0.1:8080` | Dirección de escucha. |
+| `DBYSON_DATA_DIR` | `./data` (`/data` en Docker) | SQLite interno (usuarios, sesiones, perfiles cifrados). |
+| `DBYSON_MASTER_KEY` / `DBYSON_MASTER_KEY_FILE` | — | Clave maestra del vault (base64, 32 bytes). Si no se define, se genera `master.key` en el directorio de datos. **En producción guárdala fuera del volumen de datos** (Docker secret). |
+| `DBYSON_ALLOWED_HOSTS` | vacío (todo permitido salvo link-local) | Lista separada por comas de hosts, IPs o CIDR a los que DByson puede conectarse. |
+| `DBYSON_SETUP_TOKEN` | — | Si se define, es obligatorio para crear el primer administrador. |
+| `DBYSON_MODE` | `personal` | `personal`: una persona en su propia máquina (2FA disponible pero no obligatoria). `team`: DByson accesible por red para varias personas (2FA obligatoria para `prod` y SSH). |
+| `DBYSON_REQUIRE_MFA` | según el modo | Fuerza la política: `off` (opcional), `sensitive` (conexiones `prod` y túneles SSH, incluida su exportación con credenciales) o `all` (todo salvo el inicio de sesión y la propia configuración de 2FA). Si se define, gana sobre el modo. |
 
 Generar una clave maestra: `openssl rand -base64 32`.
 
@@ -61,7 +61,7 @@ Vistas internas por tabla, cierre con la rueda, opciones, temas e inspector de r
 ## Verificación en dos pasos y auditoría
 
 - **2FA (TOTP):** se activa en *Seguridad* con cualquier app de autenticación. Al activarla se entregan 10 códigos de recuperación de un solo uso y se cierran las demás sesiones. El secreto se guarda cifrado en el vault y cada código solo sirve una vez.
-- **Política:** en modo `personal` (por defecto) la 2FA es opcional: protege poco cuando DByson solo es accesible desde tu máquina. En modo `team` (`ADMINBASE_MODE=team`) las conexiones `prod` y las que usan túnel SSH solo se abren desde una sesión verificada con 2FA.
+- **Política:** en modo `personal` (por defecto) la 2FA es opcional: protege poco cuando DByson solo es accesible desde tu máquina. En modo `team` (`DBYSON_MODE=team`) las conexiones `prod` y las que usan túnel SSH solo se abren desde una sesión verificada con 2FA.
 - **Auditoría:** se registran inicios de sesión (también fallidos), cambios en conexiones, consultas SQL, cambios de datos y exportaciones. Las lecturas de tablas no se registran. Las filas no se pueden modificar ni borrar por SQL, y cada una lleva un HMAC encadenado con una clave derivada de la clave maestra: *Verificar integridad* detecta ediciones, borrados o reordenamientos en el archivo. Limitación conocida: truncar las últimas entradas no se detecta hasta que exista un anclaje externo del último hash.
 
 ## Documentación de diseño
@@ -83,3 +83,16 @@ Construir localmente para ambas arquitecturas: `docker buildx build --platform l
 ## Licencia
 
 [Apache License 2.0](LICENSE). Copyright 2026 Gabriel Caraballo.
+
+## Migrar desde AdminBase
+
+El proyecto se llamó AdminBase. Desde esta versión todo usa el nombre DByson; una instalación anterior sigue funcionando sin cambios:
+
+| Antes | Ahora | Compatibilidad |
+|---|---|---|
+| Variables `ADMINBASE_*` | `DBYSON_*` | Las antiguas se siguen leyendo hasta la v1.0 y el log avisa de cuáles renombrar. Si existen ambas, gana `DBYSON_*`. |
+| Archivo `adminbase.db` | `dbyson.db` | Se renombra solo al arrancar (con sus archivos `-wal`/`-shm`). |
+| Imagen `adminbase:dev`, binario `/adminbase`, volumen `adminbase-data` | `dbyson:dev`, `/dbyson`, `dbyson-data` | El volumen antiguo sirve tal cual: basta montarlo en `/data`. |
+| Cookie `ab_session` | `dbyson_session` | Hay que volver a iniciar sesión una vez. |
+
+Las etiquetas criptográficas internas (`adminbase/v1/…`) **no cambian**: están ligadas a cada credencial cifrada y a la cadena de auditoría. Ver [ADR 0006](docs/adr/0006-renombrado-a-dbyson.md).

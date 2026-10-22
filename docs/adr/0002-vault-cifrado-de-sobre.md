@@ -10,7 +10,7 @@ DByson guarda credenciales de bases de datos de producción (contraseñas, certi
 
 - **Cifrado de sobre:** cada registro tiene su propia clave de datos aleatoria (DEK), envuelta con la clave maestra (KEK). Algoritmo **XChaCha20-Poly1305** (nonce de 192 bits aleatorio, sin riesgo práctico de colisión).
 - El **ID del registro** se usa como dato asociado: un texto cifrado no se puede mover a otro registro.
-- **Clave maestra**, por orden de prioridad: `ADMINBASE_MASTER_KEY` → `ADMINBASE_MASTER_KEY_FILE` (Docker secret) → `master.key` generada en el directorio de datos (modo 0600).
+- **Clave maestra**, por orden de prioridad: `DBYSON_MASTER_KEY` → `DBYSON_MASTER_KEY_FILE` (Docker secret) → `master.key` generada en el directorio de datos (modo 0600).
 - Subclaves para otros fines (p. ej. la auditoría) se derivan con HMAC-SHA256 de la clave maestra; la clave maestra nunca se usa directamente fuera del vault.
 
 ## Consecuencias

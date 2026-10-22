@@ -10,3 +10,4 @@ Un ADR aceptado no se edita; si la decisión cambia, se escribe uno nuevo que lo
 | [0003](0003-auditoria-append-only-encadenada.md) | Auditoría append-only con cadena HMAC en SQLite | Aceptada |
 | [0004](0004-modos-personal-y-equipo.md) | Modo de despliegue `personal` / `team` para la política de 2FA | Aceptada |
 | [0005](0005-cache-de-metadatos-en-el-frontend.md) | Caché compartida de metadatos en el frontend | Aceptada |
+| [0006](0006-renombrado-a-dbyson.md) | Renombrado completo de AdminBase a DByson | Aceptada |

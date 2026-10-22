@@ -131,7 +131,7 @@ export function AuthScreen({ mode, needsToken, onSession }: Props) {
           <label>
             Token de instalación
             <input type="password" value={token} onChange={(e) => setToken(e.target.value)} required />
-            <small className="muted">Definido en ADMINBASE_SETUP_TOKEN.</small>
+            <small className="muted">Definido en DBYSON_SETUP_TOKEN.</small>
           </label>
         )}
         {error && (

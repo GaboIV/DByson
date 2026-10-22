@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/audit"
+	"github.com/gaboiv/dbyson/internal/audit"
 )
 
 type confirmationInput struct {

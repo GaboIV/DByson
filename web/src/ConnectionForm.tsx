@@ -158,8 +158,8 @@ function HopEditor({
               />
             </label>
             <p className="muted">
-              Requiere ADMINBASE_SSH_KEY_DIR en el servidor. Al compartir, el receptor necesitará esa ruta en su propia instalación o
-              adjuntar la clave.
+              Requiere DBYSON_SSH_KEY_DIR en el servidor. Al compartir, el receptor necesitará esa ruta en su propia instalación o adjuntar
+              la clave.
             </p>
           </details>
         </>
@@ -479,7 +479,7 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
                         {n.name.startsWith("Docker · ") && /^[a-zA-Z0-9_.-]+$/.test(n.name.slice(9)) && (
                           <button
                             type="button"
-                            onClick={() => void copy(`docker network connect ${n.name.slice(9)} adminbase`, "Comando copiado")}
+                            onClick={() => void copy(`docker network connect ${n.name.slice(9)} dbyson`, "Comando copiado")}
                           >
                             Copiar acceso a esta red
                           </button>

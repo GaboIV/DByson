@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/audit"
-	"github.com/adminbase/adminbase/internal/drivers/mysql"
-	"github.com/adminbase/adminbase/internal/policy"
+	"github.com/gaboiv/dbyson/internal/audit"
+	"github.com/gaboiv/dbyson/internal/drivers/mysql"
+	"github.com/gaboiv/dbyson/internal/policy"
 )
 
 func (s *Server) openDB(ctx context.Context, r *http.Request, targetDB string) (*sql.DB, *connRecord, error) {

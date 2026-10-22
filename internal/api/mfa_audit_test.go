@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/audit"
-	"github.com/adminbase/adminbase/internal/auth"
+	"github.com/gaboiv/dbyson/internal/audit"
+	"github.com/gaboiv/dbyson/internal/auth"
 )
 
 const adminPassword = "a-long-enough-password"

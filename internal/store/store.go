@@ -3,8 +3,10 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 
 	_ "modernc.org/sqlite" // pure-Go driver: keeps the binary static (CGO_ENABLED=0)
@@ -122,9 +124,38 @@ func migrate(db *sql.DB) error {
 	return nil
 }
 
+const (
+	FileName       = "dbyson.db"
+	legacyFileName = "adminbase.db" // name used before the product was renamed
+)
+
+// adoptLegacyFile renames a database created under the old product name, together with its
+// WAL and shared-memory files, so existing installations keep their data. It only runs while
+// no database is open and only when the new file does not exist yet.
+func adoptLegacyFile(dir string) error {
+	newPath, oldPath := filepath.Join(dir, FileName), filepath.Join(dir, legacyFileName)
+	if _, err := os.Stat(newPath); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if _, err := os.Stat(oldPath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	// Companion files first: if the main rename failed afterwards, a stray -wal next to a
+	// missing main file is harmless, while a renamed main file without its WAL would lose data.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Rename(oldPath+suffix, newPath+suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return os.Rename(oldPath, newPath)
+}
+
 // Open opens (creating if needed) the SQLite file in dir and applies pending migrations.
 func Open(dir string) (*Store, error) {
-	path := filepath.Join(dir, "adminbase.db")
+	if err := adoptLegacyFile(dir); err != nil {
+		return nil, fmt.Errorf("rename legacy database file: %w", err)
+	}
+	path := filepath.Join(dir, FileName)
 	q := url.Values{}
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "journal_mode(WAL)")

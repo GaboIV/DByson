@@ -75,7 +75,7 @@ func VerifyPassword(password, encoded string) (bool, error) {
 
 // dummyHash is verified against when the user does not exist, so response time
 // does not reveal which usernames are registered.
-var dummyHash, _ = HashPassword("adminbase-dummy-password")
+var dummyHash, _ = HashPassword("dbyson-dummy-password")
 
 func BurnPasswordCheck(password string) {
 	_, _ = VerifyPassword(password, dummyHash)

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/drivers/mysql"
+	"github.com/gaboiv/dbyson/internal/drivers/mysql"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 )

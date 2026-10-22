@@ -10,11 +10,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/adminbase/adminbase/internal/audit"
-	"github.com/adminbase/adminbase/internal/auth"
+	"github.com/gaboiv/dbyson/internal/audit"
+	"github.com/gaboiv/dbyson/internal/auth"
 )
 
-const cookieName = "ab_session"
+const cookieName = "dbyson_session"
 
 type ctxKey struct{}
 

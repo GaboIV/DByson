@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/adminbase/adminbase/internal/audit"
+	"github.com/gaboiv/dbyson/internal/audit"
 )
 
 // actionNames gives stable, readable names to audited routes (keyed by ServeMux pattern).

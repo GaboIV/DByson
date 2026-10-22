@@ -1,4 +1,4 @@
-module github.com/adminbase/adminbase
+module github.com/gaboiv/dbyson
 
 go 1.26.0
 

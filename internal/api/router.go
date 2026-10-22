@@ -1,4 +1,4 @@
-// Package api exposes the HTTP surface of AdminBase.
+// Package api exposes the HTTP surface of DByson.
 package api
 
 import (
@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/audit"
-	"github.com/adminbase/adminbase/internal/auth"
-	"github.com/adminbase/adminbase/internal/policy"
-	"github.com/adminbase/adminbase/internal/store"
-	"github.com/adminbase/adminbase/internal/vault"
+	"github.com/gaboiv/dbyson/internal/audit"
+	"github.com/gaboiv/dbyson/internal/auth"
+	"github.com/gaboiv/dbyson/internal/policy"
+	"github.com/gaboiv/dbyson/internal/store"
+	"github.com/gaboiv/dbyson/internal/vault"
 )
 
 // Deps are the collaborators the HTTP layer needs.

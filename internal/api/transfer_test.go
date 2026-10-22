@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adminbase/adminbase/internal/auth"
-	"github.com/adminbase/adminbase/internal/tunnel"
+	"github.com/gaboiv/dbyson/internal/auth"
+	"github.com/gaboiv/dbyson/internal/tunnel"
 )
 
 func TestProfileTransfer(t *testing.T) {

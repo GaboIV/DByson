@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/adminbase/adminbase/internal/drivers/mysql"
-	"github.com/adminbase/adminbase/internal/tunnel"
+	"github.com/gaboiv/dbyson/internal/drivers/mysql"
+	"github.com/gaboiv/dbyson/internal/tunnel"
 )
 
 var validEnvs = map[string]bool{"local": true, "dev": true, "staging": true, "prod": true}

@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/gaboiv/dbyson/internal/config"
 	"io"
 	"net"
 	"os"
@@ -15,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/policy"
+	"github.com/gaboiv/dbyson/internal/policy"
 	"github.com/kayrus/putty"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -167,9 +168,9 @@ func signerContext(ctx context.Context, h Hop) (result ssh.Signer, err error) {
 	}()
 	key := []byte(strings.TrimSpace(h.PrivateKey))
 	if len(key) == 0 && h.KeyFile != "" {
-		dir := os.Getenv("ADMINBASE_SSH_KEY_DIR")
+		dir := config.Get("SSH_KEY_DIR")
 		if dir == "" {
-			return nil, errors.New("adjunta la clave o configura ADMINBASE_SSH_KEY_DIR para usar archivos del servidor")
+			return nil, errors.New("adjunta la clave o configura DBYSON_SSH_KEY_DIR para usar archivos del servidor")
 		}
 		name := h.KeyFile
 		if filepath.IsAbs(name) {

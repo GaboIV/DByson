@@ -12,11 +12,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/api"
-	"github.com/adminbase/adminbase/internal/policy"
-	"github.com/adminbase/adminbase/internal/store"
-	"github.com/adminbase/adminbase/internal/vault"
-	"github.com/adminbase/adminbase/web"
+	"github.com/gaboiv/dbyson/internal/api"
+	"github.com/gaboiv/dbyson/internal/config"
+	"github.com/gaboiv/dbyson/internal/policy"
+	"github.com/gaboiv/dbyson/internal/store"
+	"github.com/gaboiv/dbyson/internal/vault"
+	"github.com/gaboiv/dbyson/web"
 )
 
 // Set at build time via -ldflags.
@@ -32,8 +33,8 @@ func main() {
 
 func run(log *slog.Logger) error {
 	// Secure default: loopback only. Exposing it requires an explicit opt-in.
-	addr := env("ADMINBASE_LISTEN", "127.0.0.1:8080")
-	dataDir := env("ADMINBASE_DATA_DIR", "./data")
+	addr := config.GetOr("LISTEN", "127.0.0.1:8080")
+	dataDir := config.GetOr("DATA_DIR", "./data")
 
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
@@ -52,17 +53,20 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	mode := env("ADMINBASE_MODE", modePersonal)
-	mfaPolicy, err := resolveMFAPolicy(mode, os.Getenv("ADMINBASE_REQUIRE_MFA"))
+	mode := config.GetOr("MODE", modePersonal)
+	mfaPolicy, err := resolveMFAPolicy(mode, config.Get("REQUIRE_MFA"))
 	if err != nil {
 		return err
 	}
 	if mode == modePersonal && !isLoopback(addr) {
-		log.Warn("personal mode without required 2FA: publish the port on 127.0.0.1 only, or set ADMINBASE_MODE=team",
+		log.Warn("personal mode without required 2FA: publish the port on 127.0.0.1 only, or set DBYSON_MODE=team",
 			"addr", addr)
 	}
 	log.Info("security policy", "mode", mode, "mfa", mfaPolicy)
-	pol, err := policy.ParseAllowlist(os.Getenv("ADMINBASE_ALLOWED_HOSTS"))
+	if old := config.Deprecated(); len(old) > 0 {
+		log.Warn("deprecated environment variables: rename the ADMINBASE_ prefix to DBYSON_", "variables", old)
+	}
+	pol, err := policy.ParseAllowlist(config.Get("ALLOWED_HOSTS"))
 	if err != nil {
 		return err
 	}
@@ -73,7 +77,7 @@ func run(log *slog.Logger) error {
 			Store:      st,
 			Vault:      v,
 			Policy:     pol,
-			SetupToken: os.Getenv("ADMINBASE_SETUP_TOKEN"),
+			SetupToken: config.Get("SETUP_TOKEN"),
 			MFAPolicy:  mfaPolicy,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -86,7 +90,7 @@ func run(log *slog.Logger) error {
 
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("adminbase listening", "addr", addr, "version", version, "data", dataDir)
+		log.Info("dbyson listening", "addr", addr, "version", version, "data", dataDir)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
@@ -102,7 +106,7 @@ func run(log *slog.Logger) error {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return err
 	}
-	log.Info("adminbase stopped")
+	log.Info("dbyson stopped")
 	return nil
 }
 
@@ -113,7 +117,7 @@ const (
 	modeTeam     = "team"     // reachable by others over a network: 2FA required for prod and SSH
 )
 
-// resolveMFAPolicy applies an explicit ADMINBASE_REQUIRE_MFA, or the mode's default.
+// resolveMFAPolicy applies an explicit DBYSON_REQUIRE_MFA, or the mode's default.
 func resolveMFAPolicy(mode, explicit string) (string, error) {
 	var def string
 	switch mode {
@@ -122,13 +126,13 @@ func resolveMFAPolicy(mode, explicit string) (string, error) {
 	case modeTeam:
 		def = api.MFAPolicySensitive
 	default:
-		return "", fmt.Errorf("ADMINBASE_MODE must be personal or team (got %q)", mode)
+		return "", fmt.Errorf("DBYSON_MODE must be personal or team (got %q)", mode)
 	}
 	if explicit == "" {
 		return def, nil
 	}
 	if !api.ValidMFAPolicy(explicit) {
-		return "", fmt.Errorf("ADMINBASE_REQUIRE_MFA must be off, sensitive or all (got %q)", explicit)
+		return "", fmt.Errorf("DBYSON_REQUIRE_MFA must be off, sensitive or all (got %q)", explicit)
 	}
 	return explicit, nil
 }
@@ -143,11 +147,4 @@ func isLoopback(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
-}
-
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

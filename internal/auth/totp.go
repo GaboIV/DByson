@@ -114,6 +114,7 @@ func NewRecoveryCodes() ([]string, error) {
 // values, so a fast hash is sufficient (unlike passwords).
 func HashRecoveryCode(code string) string {
 	c := strings.ToLower(strings.NewReplacer("-", "", " ", "").Replace(strings.TrimSpace(code)))
+	// The "adminbase-" label predates the rename and is part of every stored hash: never change it.
 	sum := sha256.Sum256([]byte("adminbase-recovery:" + c))
 	return hex.EncodeToString(sum[:])
 }
