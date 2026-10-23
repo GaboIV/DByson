@@ -1,287 +1,276 @@
 # DByson — Plan Maestro
 
-> **Estado revisado al 21 de octubre de 2026:** fase 1 avanzada, fase 0 parcial, túneles SSH de fase 2 y adelantos de productividad de fase 3. Las funciones presentes no equivalen a una versión validada. Véase [evaluación y prioridades](EVALUACION_2026-10-21.md).
->
-> **Identidad:** DByson, inspirado en una esfera de Dyson para bases de datos. El producto usa el nuevo nombre; los comandos, el módulo Go y las variables `ADMINBASE_*` conservan sus identificadores por compatibilidad.
-
 > Un IDE web de bases de datos: **la sencillez de Adminer, la potencia de phpMyAdmin, una UX moderna y seguridad por defecto.**
-> Se distribuye como una sola imagen Docker para que cualquier compañero lo levante con un comando.
+> Se distribuye como una sola imagen Docker que cualquier persona levanta con un comando.
+
+**Revisión:** 22 de octubre de 2026 · **Nombre:** DByson (antes AdminBase; ver [ADR 0006](adr/0006-renombrado-a-dbyson.md)) · **Licencia:** Apache-2.0
+
+**Documentos relacionados:** [modelo de amenazas](threat-model.md) · [decisiones de arquitectura](adr/README.md) · detalle de lo implementado en [seguridad del MVP](MVP_SEGURIDAD.md), [experiencia de consulta](EXPERIENCIA_CONSULTA.md), [interfaz y preferencias](INTERFAZ_Y_PREFERENCIAS.md) y [SSH y espacios de trabajo](SSH_Y_ESPACIOS.md). La [evaluación del 21 de octubre](EVALUACION_2026-10-21.md) es histórica.
 
 ---
 
-## 1. Visión y principios
+## 1. Dónde estamos
 
-| Principio | Qué significa en la práctica |
-|---|---|
-| **Cero fricción** | `docker run` y listo. Un solo binario, sin PHP, sin Apache, sin configuración obligatoria. |
-| **Seguro por defecto** | TLS verificado, credenciales cifradas, sin `LOAD DATA LOCAL`, lista blanca de hosts, auditoría. Lo inseguro requiere activarse explícitamente. |
-| **Keyboard-first** | Paleta de comandos (`Ctrl+K`), atajos para todo, pestañas como un IDE. |
-| **Nunca romper producción por accidente** | Conexiones etiquetadas por entorno (prod = rojo), modo solo-lectura, confirmación de sentencias destructivas, edición en lote con vista previa del SQL antes de aplicar. |
-| **Crecer sin reescribir** | Arquitectura de *drivers* desde el día 1: MySQL primero, PostgreSQL/SQLite/SQL Server después. |
+DByson ya es una herramienta usable a diario para **una persona con MySQL/MariaDB**, local o remoto por SSH. Lo que falta para la meta se agrupa en tres bloques:
 
-**No-objetivos (por ahora):** reemplazar herramientas de BI, ser un ORM, administrar clústeres o hacer migraciones de esquema versionadas.
+1. **Publicar honestamente la v0.1.0:** el CI nunca se ha ejecutado en GitHub y faltan pruebas de extremo a extremo automatizadas.
+2. **Productividad de un cliente maduro:** editor SQL con autocompletado, consultas guardadas, EXPLAIN, navegación por claves foráneas, importación.
+3. **Modo equipo:** hoy solo existe el administrador inicial; no hay gestión de usuarios, roles, conexiones compartidas ni SSO.
 
----
-
-## 2. Decisión de stack (recomendado)
-
-| Capa | Elección | Por qué |
+| Fase | Estado | Resumen |
 |---|---|---|
-| **Backend** | **Go** | Un binario estático (~20 MB), excelente para Docker *distroless*, SSH nativo (`golang.org/x/crypto/ssh`), driver MySQL maduro con TLS (`go-sql-driver/mysql`), concurrencia para streaming de resultados grandes. |
-| **Frontend** | **React + TypeScript + Vite** | Ecosistema enorme, fácil encontrar colaboradores. |
-| UI kit | Tailwind + shadcn/ui (Radix) | Accesible, moderno, temable (modo claro/oscuro). |
-| Editor SQL | CodeMirror 6 (o Monaco) | Autocompletado por esquema, resaltado, multi-cursor. CodeMirror pesa mucho menos. |
-| Grilla de datos | TanStack Table + virtualización (o Glide Data Grid) | Millones de filas sin congelar el navegador. |
-| Estado/servidor | TanStack Query | Caché, reintentos y cancelación de consultas. |
-| Persistencia interna | SQLite (embebido) | Usuarios, perfiles de conexión cifrados, historial, auditoría. Sin servicios extra. |
-| Empaquetado | Frontend embebido en el binario (`go:embed`) | Un solo artefacto → una sola imagen. |
-| Futuro escritorio | Wails | Reutiliza el mismo backend Go + frontend React para una app nativa. |
-
-> **Alternativa:** si el equipo es fuertemente JS, Node.js + TypeScript (Fastify + `mysql2` + `ssh2`) también funciona; se pierde el binario único y la imagen crece (~150 MB), pero comparte lenguaje con el frontend.
+| 0 · Fundaciones | 🟡 Casi cerrada | Todo listo salvo la **primera ejecución del CI** en GitHub. |
+| 1 · MVP MySQL | 🟡 Funcional, sin release | Funciones completas y probadas a mano y con integración local. Falta cerrar criterios de salida y publicar v0.1.0. |
+| 2 · Conectividad segura | 🟡 Mayoría hecha | SSH, 2FA y auditoría listos. Faltan mTLS, panel de sesiones, validar certificados de cliente MySQL y cancelar consultas desde la interfaz. |
+| 3 · Productividad | 🟡 Iniciada | Pestañas, paleta y archivos `.sql` listos. El resto pendiente. |
+| 4 · Equipos | ⬜ Base preparada | Modo `team`, aislamiento por usuario y exportación de perfiles. Falta lo esencial: usuarios, roles, SSO. |
+| 5+ · Expansión | ⬜ Pendiente | Solo MySQL/MariaDB; el contrato de drivers aún no existe en el código. |
 
 ---
 
-## 3. Arquitectura
+## 2. Visión y principios
+
+| Principio | En la práctica |
+|---|---|
+| **Cero fricción** | `docker run` y listo. Un binario, sin PHP ni Apache, sin configuración obligatoria. |
+| **Seguro por defecto** | TLS verificado, credenciales cifradas, sin `LOAD DATA LOCAL`, lista blanca de destinos, auditoría. Lo inseguro se activa explícitamente. |
+| **Personal primero, equipo después** | Uso individual sin fricción (2FA opcional); requisitos estrictos declarados con `DBYSON_MODE=team`. |
+| **Nunca romper producción por accidente** | Color por entorno, solo lectura reforzado en el servidor, confirmación escrita de sentencias que cambian datos. |
+| **Keyboard-first** | Paleta `Ctrl+K`, `Ctrl+Enter`, `Ctrl+Alt+N`, pestañas con teclado. |
+| **Crecer sin reescribir** | Contrato de drivers antes del segundo motor; vistas del frontend separadas por archivo. |
+
+**No-objetivos:** reemplazar herramientas de BI, ser un ORM, administrar clústeres, migraciones de esquema versionadas.
+
+---
+
+## 3. Stack: lo planeado frente a lo real
+
+| Capa | Plan original | Hoy | Decisión |
+|---|---|---|---|
+| Backend | Go | **Go 1.26**, binario estático | ✅ Se mantiene ([ADR 0001](adr/0001-binario-go-con-frontend-embebido.md)). |
+| Frontend | React + TS + Vite | **React 19 + TypeScript + Vite**, formato con Prettier | ✅ |
+| Estilos | Tailwind + shadcn/ui | CSS propio con *tokens* y 5 temas | Se mantiene: cumple y no añade dependencias. |
+| Editor SQL | CodeMirror 6 | `<textarea>` | ⬜ **Adoptar CodeMirror 6** en la Fase 3 (autocompletado, resaltado). |
+| Grilla | TanStack Table con virtualización | Tabla HTML paginada (≤500 filas) | Suficiente con paginación; virtualizar solo si se suben los límites. |
+| Datos en el cliente | TanStack Query | Caché propia de metadatos ([ADR 0005](adr/0005-cache-de-metadatos-en-el-frontend.md)) | Se mantiene mientras sea pequeña; revisar si crece. |
+| Persistencia | SQLite embebido | `modernc.org/sqlite` con migraciones versionadas | ✅ |
+| Streaming / cancelación | WebSocket | HTTP + `AbortController` (cancela en el driver) | WebSocket solo si hace falta progreso en vivo (importación). |
+
+---
+
+## 4. Arquitectura actual
 
 ```
- Navegador (React SPA)
-   │  HTTPS (TLS 1.3, opcional mTLS con certificado de cliente)
-   │  Cookie de sesión HttpOnly + Secure + SameSite=Strict, token CSRF
+ Navegador (React)
+   │  HTTP(S) · cookie dbyson_session (HttpOnly, SameSite=Strict) · token CSRF · CSP estricta
    ▼
- ┌──────────────────────────── DByson (binario Go) ────────────────────────────┐
- │  HTTP API (REST + WebSocket para streaming / cancelar consultas)               │
- │  ├─ Auth: usuarios locales (Argon2id) · TOTP · Passkeys · OIDC (fase 4)        │
- │  ├─ RBAC + Políticas (solo-lectura, entornos, hosts permitidos)                │
- │  ├─ Vault: perfiles de conexión cifrados (XChaCha20-Poly1305 / AES-256-GCM)    │
- │  ├─ Session Manager: pools por usuario+conexión, timeouts, cancelación         │
- │  ├─ Tunnel Manager: SSH (clave/agente/contraseña), ProxyJump, known_hosts      │
- │  ├─ Driver API ──► mysql (MySQL/MariaDB) · postgres · sqlite · mssql (futuro)  │
- │  └─ Auditoría (quién, qué SQL, cuándo, contra qué conexión)                    │
- │  SQLite interno (/data)                                                        │
- └────────────────────────────────────────────────────────────────────────────────┘
-   │                                   │
-   │ TLS verificado (VERIFY_IDENTITY)  │ SSH (ed25519) → túnel local → MySQL
-   ▼                                   ▼
- MySQL directo                     Bastión / servidor remoto
+ ┌──────────────────────────────── DByson (binario Go) ────────────────────────────────┐
+ │ api/        handlers, CSRF, Origin, cabeceras, auditoría por petición                  │
+ │ auth/       Argon2id, sesiones (hash del token), TOTP, códigos de recuperación, límites │
+ │ vault/      cifrado de sobre XChaCha20-Poly1305, subclaves derivadas                    │
+ │ audit/      registro append-only con cadena HMAC                                        │
+ │ policy/     lista blanca de destinos (anti-SSRF), clasificador SQL, solo lectura        │
+ │ tunnel/     SSH: clave/PPK/agente/contraseña, bastión, huella fijada                    │
+ │ drivers/mysql/  conexión TLS, explorador, consulta limitada, exportación en streaming   │
+ │ config/     variables DBYSON_* (con compatibilidad ADMINBASE_*)                         │
+ │ store/      SQLite + migraciones (/data/dbyson.db)                                      │
+ └──────────────────────────────────────────────────────────────────────────────────────┘
+   │ TLS verify_identity por defecto        │ SSH → direct-tcpip (sin puertos locales)
+   ▼                                        ▼
+ MySQL / MariaDB                        Bastión → servidor → MySQL
+
+ Opcional: dbyson-discovery (sidecar en red interna) ── socket de Docker (solo 2 GET filtrados)
 ```
 
-**Regla de oro:** las credenciales de la base de datos **nunca llegan al navegador**. El frontend solo conoce un `connectionId`; el backend abre túneles y conexiones.
+**Regla de oro:** las credenciales nunca llegan al navegador; el frontend solo conoce un `connectionId`.
 
-### Interfaz de driver (contrato para soportar más motores)
+**Frontend:** `web/src/Workbench.tsx` (pestañas) → `Workspace.tsx` (una pestaña) → `web/src/workspace/*` (una vista por archivo) con la caché compartida `catalog.ts`.
 
-```go
-type Driver interface {
-    Name() string
-    Connect(ctx context.Context, cfg ConnConfig, dialer Dialer) (Conn, error)
-}
+### Contrato de drivers (pendiente)
 
-type Conn interface {
-    Databases(ctx context.Context) ([]Database, error)
-    Objects(ctx context.Context, db string) ([]Object, error)      // tablas, vistas, rutinas, triggers
-    Describe(ctx context.Context, ref ObjectRef) (*TableSchema, error)
-    Query(ctx context.Context, sql string, opts QueryOpts) (RowStream, error)
-    Exec(ctx context.Context, stmts []Statement, tx bool) (*ExecResult, error)
-    Explain(ctx context.Context, sql string) (*Plan, error)
-    DDL(change SchemaChange) (string, error)                       // genera SQL, no lo ejecuta
-    Cancel(ctx context.Context, queryID string) error
-    Close() error
-}
-```
-
-`Dialer` es la clave: el driver no sabe si va directo o por túnel SSH — el Tunnel Manager le entrega un `net.Conn`.
-
-### Estructura del repositorio
-
-```
-adminbase/
-├─ cmd/adminbase/          # main.go, flags, arranque
-├─ internal/
-│  ├─ api/                 # handlers HTTP/WS, middlewares (CSRF, rate limit, headers)
-│  ├─ auth/                # usuarios, sesiones, TOTP, WebAuthn, OIDC
-│  ├─ vault/               # cifrado de perfiles, derivación de claves
-│  ├─ tunnel/              # SSH, ProxyJump, known_hosts
-│  ├─ drivers/mysql/       # implementación MySQL/MariaDB
-│  ├─ policy/              # RBAC, allowlist de hosts, clasificador de SQL destructivo
-│  ├─ audit/
-│  └─ store/               # SQLite interno + migraciones
-├─ web/                    # React + Vite (se compila y se embebe)
-├─ deploy/                 # Dockerfile, docker-compose de ejemplo, Helm (futuro)
-├─ docs/                   # este plan, ADRs, modelo de amenazas
-└─ .github/workflows/      # CI: tests, lint, SAST, build multi-arch, firma
-```
+El plan original definía una interfaz `Driver`/`Conn` común a todos los motores. **Aún no existe en el código**: `internal/drivers/mysql` es la única implementación y la API la usa directamente. Debe extraerse **antes** de empezar PostgreSQL (Fase 5), incluyendo un modelo de *capacidades* para que la interfaz no muestre acciones que un motor no soporta.
 
 ---
 
-## 4. Seguridad (el corazón del proyecto)
+## 5. Seguridad
 
-### 4.1 Acceso a DByson
-- **Usuarios locales** con hash **Argon2id**; bloqueo progresivo por intentos fallidos y rate limiting por IP/usuario.
-- **2FA**: TOTP desde la fase 2; **Passkeys/WebAuthn** como opción preferida.
-- **SSO OIDC** (Google Workspace, Microsoft Entra ID, Keycloak) en modo equipo.
-- **mTLS opcional**: DByson puede exigir **certificado de cliente** emitido por una CA propia (`adminbase cert issue --user ana`). Esa es la protección "estilo certificado": sin el certificado instalado, el navegador ni siquiera ve la pantalla de login.
-- Sesiones: cookie `HttpOnly; Secure; SameSite=Strict`, expiración por inactividad, revocación desde el panel.
+El estado detallado, con lo implementado, lo parcial y los riesgos aceptados, está en el [modelo de amenazas](threat-model.md). Resumen:
 
-### 4.2 Conexiones a la base de datos
-- **TLS hacia MySQL** con modos `DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY` (por defecto `VERIFY_IDENTITY` cuando hay TLS), CA personalizada y **certificado + clave de cliente** MySQL.
-- **Túnel SSH**: autenticación por clave (ed25519/RSA, con passphrase), **ssh-agent**, contraseña (desaconsejada), **ProxyJump** (bastión → servidor), keep-alive y reconexión.
-- **Verificación de host key**: TOFU con huella mostrada al usuario y guardada; un cambio de huella **bloquea** la conexión (anti MITM).
-- **`LOAD DATA LOCAL INFILE` deshabilitado** — evita el ataque de "servidor MySQL malicioso" que lee archivos del host (un fallo histórico de herramientas tipo Adminer).
-- **Allowlist de destinos** (hosts/CIDR/puertos permitidos) — evita que DByson se use como proxy SSRF hacia la red interna (CVE-2021-21311 en Adminer).
-- **Vault**: perfiles cifrados con **envelope encryption** — una clave de datos por perfil, envuelta con una clave maestra derivada de una passphrase (Argon2id) o provista por variable de entorno / Docker secret / KMS (futuro).
+| Área | Hecho | Pendiente |
+|---|---|---|
+| Acceso a DByson | Argon2id, límites por usuario e IP, sesiones con caducidad, TOTP con códigos de recuperación, política por modo | mTLS de acceso, passkeys, SSO OIDC, panel de sesiones activas |
+| Conexiones | TLS con 4 modos y CA propia, SSH con huella fijada y bastión, `LOAD DATA LOCAL` deshabilitado, lista blanca anti-SSRF | Validar en integración los certificados de cliente MySQL |
+| Errores humanos | Color por entorno, solo lectura en cada conexión física, confirmación escrita con desafío de un solo uso, límites de resultado | Botón para cancelar consultas en curso (`KILL QUERY`), edición en lote con vista previa transaccional |
+| Datos en reposo | Vault con cifrado de sobre; clave maestra por variable, archivo o generada | Comando de rotación de la clave maestra; exigir clave externa en modo `team` |
+| Auditoría | Append-only con cadena HMAC verificable, visor en la interfaz, SQL con contraseñas ocultas | Exportación a syslog/SIEM, retención, anclaje externo del último hash |
+| Cadena de suministro | Distroless no-root, `govulncheck`, `npm audit`, Trivy, SBOM, procedencia y firma cosign en release | Primera ejecución real; Dependabot/Renovate; CodeQL |
 
-### 4.3 Protección contra errores humanos
-- Etiqueta de entorno por conexión (`local`, `dev`, `staging`, `prod`) con color en toda la UI.
-- **Modo solo-lectura** por conexión o por rol (sesión MySQL con `SET SESSION TRANSACTION READ ONLY` + validación del lado de DByson).
-- Clasificador de SQL: `DROP`, `TRUNCATE`, `ALTER`, `DELETE/UPDATE` sin `WHERE` → confirmación escribiendo el nombre de la base/tabla.
-- Edición de datos **en lote**: los cambios quedan "pendientes", se muestra el SQL generado y se aplican en **una transacción**.
-- Límite y timeout de consultas configurables; botón de **cancelar consulta** real (`KILL QUERY`).
-
-### 4.4 Endurecimiento web y de la cadena de suministro
-- Headers: CSP estricta sin `unsafe-inline`, `X-Frame-Options: DENY`, HSTS, `Referrer-Policy`, `Permissions-Policy`.
-- Protección CSRF, validación estricta de entrada, sin SQL construido por concatenación en el backend (identificadores siempre escapados por el driver).
-- Imagen **distroless, usuario no-root, sistema de archivos de solo lectura** (salvo `/data`).
-- CI: `govulncheck`, `gosec`, `npm audit`, CodeQL, **Trivy** sobre la imagen, Dependabot/Renovate.
-- **SBOM** (Syft) y **firma de imágenes** con cosign; builds reproducibles.
-- **Auditoría** inmutable (append-only) de logins y sentencias ejecutadas; exportable a JSON/syslog.
-- Modelo de amenazas (STRIDE) documentado en `docs/threat-model.md` y revisado en cada fase. Pentest/bug bounty antes de la v1.0.
-
-> **Recomendación operativa:** DByson nunca debe exponerse a Internet sin mTLS, SSO o una VPN/zero-trust (Tailscale, Cloudflare Access) delante. El modo por defecto escucha en `127.0.0.1`.
+> **Recomendación operativa:** no exponer DByson a Internet sin VPN/zero-trust, mTLS o SSO delante. Por defecto escucha en `127.0.0.1`.
 
 ---
 
-## 5. UX: qué lo hace mejor que Adminer / phpMyAdmin
+## 6. Experiencia de uso
 
-- **Pantalla de inicio** con conexiones guardadas como tarjetas (color por entorno, último uso, estado del túnel).
-- **Árbol lateral** de bases → tablas/vistas/rutinas con búsqueda difusa.
-- **Pestañas** de trabajo (tabla, consulta, estructura) que sobreviven al recargar.
-- **Grilla de datos** virtualizada: filtros por columna sin escribir SQL, orden, edición inline, vista JSON/BLOB, copiar como CSV/JSON/INSERT, navegación por claves foráneas (clic en un FK → abre la fila relacionada).
-- **Editor SQL** con autocompletado por esquema, formateador, ejecutar selección (`Ctrl+Enter`), múltiples resultados, historial y consultas guardadas.
-- **EXPLAIN visual** con advertencias (full scan, índices no usados).
-- **Editor de estructura** visual (columnas, índices, FKs) que **muestra el `ALTER TABLE` antes de ejecutarlo**.
-- **Diagrama ER** auto-generado.
-- **Importar/Exportar**: CSV, JSON, SQL (dump con streaming, sin límites de memoria).
-- **Paleta de comandos** `Ctrl+K`, modo oscuro, i18n (español e inglés desde el inicio).
+**Hecho:** inicio con tarjetas por entorno, búsqueda y favoritas; asistente de conexión con descubrimiento de MySQL en Docker; explorador de bases y tablas; filtros en borrador que solo se aplican con *Mostrar*; conteo exacto bajo demanda; detalle de registro con JSON; copiar celda/fila; editar, duplicar, insertar y borrar filas; estructura y DDL; plantillas de `ALTER TABLE`; consola SQL; exportación SQL/CSV/JSON en streaming; pestañas agrupadas por tabla; consultas con nombre propio, descarga y apertura de `.sql`; paleta `Ctrl+K`; 5 temas; modo *Sólo ver*; historial de la sesión; caché sin recargas al cambiar de pestaña; indicadores de carga.
 
----
-
-## 6. Distribución y uso en equipo
-
-### Modo personal
-```bash
-docker run -d --name adminbase -p 127.0.0.1:8080:8080 -v adminbase-data:/data adminbase/adminbase:latest
-```
-- Imágenes en **Docker Hub** y **GHCR**, multi-arquitectura (`amd64`, `arm64` → funciona en Mac M-series y Raspberry Pi).
-- Para conectar a un MySQL en tu propia máquina desde el contenedor: `host.docker.internal`.
-
-### Modo equipo
-- Un DByson compartido (servidor interno o VPS detrás de VPN) con **usuarios, roles y conexiones compartidas**:
-  - Roles: `owner`, `admin`, `developer` (lectura/escritura en no-prod), `analyst` (solo lectura), `viewer`.
-  - Permisos por conexión y por entorno ("María puede escribir en dev, solo leer en prod").
-- **Compartir sin servidor**: exportar perfiles de conexión como archivo cifrado `.abx` (cifrado con passphrase vía `age`); el compañero lo importa en su propio DByson. Las claves SSH pueden excluirse para que cada uno use la suya.
-- `docker-compose.yml` de referencia con Caddy/Traefik para HTTPS automático.
-- Configuración por variables de entorno y Docker secrets (`ADMINBASE_MASTER_KEY_FILE`, `ADMINBASE_ALLOWED_HOSTS`, `ADMINBASE_OIDC_*`).
+**Pendiente, por valor para el uso diario:**
+1. Editor SQL con resaltado y autocompletado por esquema (CodeMirror 6), ejecutar la selección, varias sentencias.
+2. Consultas guardadas en el servidor (opt-in; hoy solo como archivo `.sql`).
+3. Navegación por claves foráneas (clic en un valor → registro relacionado).
+4. EXPLAIN visual con advertencias.
+5. Importación CSV/SQL con progreso.
+6. Editor visual de estructura con vista previa del DDL.
+7. Diagrama ER.
+8. Interfaz en inglés (i18n).
 
 ---
 
-## 7. Roadmap por fases
+## 7. Distribución y despliegue
 
-Las estimaciones asumen 1 persona a tiempo parcial (~15 h/semana). Con dedicación completa, dividir aprox. entre 2,5.
-
-### Fase 0 — Fundaciones (2–3 semanas)
-- Repositorio (monorepo), licencia, convenciones, ADRs.
-- Esqueleto Go + React embebido; build de imagen Docker distroless.
-- CI: lint, tests, `govulncheck`, Trivy, build multi-arch.
-- Sistema de diseño base (tokens, tema claro/oscuro, componentes).
-- Modelo de amenazas v1.
-- MySQL + MariaDB de prueba en `docker-compose` (con datos de ejemplo tipo Sakila) para desarrollo y tests de integración.
-
-**Entregable:** contenedor que arranca, muestra login y pasa el pipeline de seguridad.
-
-### Fase 1 — MVP MySQL (avanzada; cierre pendiente de validación)
-- [x] Login de usuario local (Argon2id), setup inicial del primer admin.
-- [x] Vault cifrado (XChaCha20-Poly1305) y CRUD de perfiles de conexión.
-- [x] Conexión directa a MySQL/MariaDB con TLS (`VERIFY_IDENTITY`, CA propia).
-- [x] Explorador: bases de datos, tablas y vistas; estructura de tabla (columnas, tipos, claves, índices, DDL).
-- [x] Grilla de datos con paginación, filtros por columna, ordenamiento por cabecera, inserción, edición y eliminación de registros.
-- [x] Consola SQL con ejecución directa (`Ctrl+Enter`), estadísticas de tiempo/filas, atajos de consulta, historial y clasificador con confirmación de sentencias destructivas (`DROP`, `TRUNCATE`, `UPDATE`/`DELETE` sin `WHERE`).
-- [x] Exportación SQL/CSV/JSON por streaming, selección explícita de tabla para CSV/JSON y errores de descarga detectables. Restauración SQL básica validada en MySQL 8.4 y MariaDB 11.4.
-- [x] Etiquetas de entorno, solo lectura en cada sesión física y política conservadora en servidor, archivos locales deshabilitados y allowlist. Filtros estructurados sin SQL libre.
-
-**Entregable objetivo (no certificado):** `v0.1.0` en Docker, tras cerrar las brechas y pruebas de aceptación de la evaluación.
-
-### Fase 2 — Conectividad segura (4–5 semanas)
-- [x] Túnel SSH: OpenSSH/PPK v2/v3, passphrase, ssh-agent del servidor y contraseña; huella fijada explícitamente; bastión opcional, keepalive y cancelación. Véase [SSH y espacios de trabajo](SSH_Y_ESPACIOS.md).
-- Certificados de cliente MySQL: implementación presente; pendiente validación de integración.
-- mTLS para acceder a DByson (+ CLI para emitir certificados de cliente).
-- TOTP 2FA, gestión de sesiones activas.
-- Auditoría v1.
-
-**Entregable:** `v0.2.0` — apto para conectar a servidores remotos y producción de forma segura.
-
-### Fase 3 — Productividad (6–8 semanas)
-- Editor visual de estructura (crear/alterar tablas, índices, FKs) con vista previa del DDL.
-- Importación CSV/SQL con streaming y barra de progreso.
-- EXPLAIN visual, diagrama ER, navegación por FKs.
-- [x] Paleta de comandos y pestañas independientes; se restauran destinos al recargar. Borradores/resultados solo en memoria de sesión.
-- [ ] Consultas guardadas, snippets y persistencia optativa de borradores.
-- Gestión de usuarios y permisos de MySQL (`GRANT`), lista de procesos (`SHOW PROCESSLIST` + kill).
-- Passkeys/WebAuthn.
-
-**Entregable:** `v0.5.0` — paridad práctica con phpMyAdmin en lo que se usa a diario.
-
-### Fase 4 — Equipos (5–6 semanas)
-- Multiusuario con RBAC y permisos por conexión/entorno.
-- [x] Exportación/importación personal `.dbyson`, con credenciales cifradas opcionales y claves SSH separadas.
-- [ ] Conexiones compartidas del equipo con permisos y administración central.
-- SSO OIDC.
-- Auditoría avanzada (filtros, exportación, retención) y modo solo-lectura forzado por rol.
-- Helm chart / guía de despliegue detrás de VPN o Cloudflare Access.
-
-**Entregable:** `v1.0.0` — tras auditoría de seguridad externa / pentest.
-
-### Fase 5+ — Expansión (continuo)
-- Drivers: **PostgreSQL** → SQLite → SQL Server → (Redis/MongoDB como vistas especiales).
-- App de escritorio con Wails (mismo código).
-- Asistente IA opcional (texto → SQL, explicar consultas, sugerir índices), siempre **opt-in**, enviando solo el esquema y nunca datos sin permiso explícito.
-- Respaldos programados, comparación de esquemas (diff entre dev y prod), API pública y sistema de plugins.
+- **Imagen:** `ghcr.io/gaboiv/dbyson`, multi-arquitectura (amd64, arm64), firmada con cosign, con SBOM. Se publica al subir una etiqueta `vX.Y.Z`.
+- **Modo personal** (por defecto): una persona, puerto publicado en `127.0.0.1`, 2FA opcional.
+  ```bash
+  docker run -d --name dbyson -p 127.0.0.1:8080:8080 -v dbyson-data:/data ghcr.io/gaboiv/dbyson:0.1
+  ```
+- **Modo equipo** (`DBYSON_MODE=team`): 2FA obligatoria para `prod` y SSH. Debe ir detrás de HTTPS/VPN y con `DBYSON_MASTER_KEY_FILE` (Docker secret).
+- **Compartir sin servidor:** archivos `.dbyson` con perfiles; credenciales opcionales cifradas con frase (Argon2id + XChaCha20-Poly1305); las claves SSH nunca viajan.
+- **Pendiente:** guía de despliegue con proxy HTTPS (Caddy/Traefik) y, más adelante, Helm.
 
 ---
 
-## 8. Calidad y pruebas
-- **Unitarias** en Go (vault, clasificador de SQL, generación de DDL) y en el frontend (Vitest).
-- **Integración** con Testcontainers contra MySQL 5.7, 8.0, 8.4 LTS, 9.x y MariaDB 10.11/11.x.
-- **Pruebas de túnel SSH** con un contenedor `openssh-server` en CI.
-- **E2E** con Playwright (flujos: conectar, editar fila, ejecutar consulta, exportar).
-- **Fuzzing** del clasificador de SQL y del parser de entrada (`go test -fuzz`).
-- Benchmarks: abrir tabla de 1M filas < 1 s al primer render; exportar 1 GB sin superar ~100 MB de RAM.
+## 8. Hoja de ruta
+
+Estimaciones para una persona a tiempo parcial (~15 h/semana).
+
+### Fase 0 — Fundaciones · 🟡 casi cerrada
+- [x] Licencia Apache-2.0, ADRs, modelo de amenazas, Prettier.
+- [x] Go + React embebido; imagen distroless no-root; amd64 + arm64.
+- [x] CI: vet, tests con `-race`, `govulncheck`, formato, `npm audit`, integración MySQL 8.4 / MariaDB 11.4, build multi-arquitectura, Trivy. Release firmado.
+- [x] Nombre unificado DByson ([ADR 0006](adr/0006-renombrado-a-dbyson.md)).
+- [ ] **Primera ejecución del CI en GitHub y corregir lo que falle.**
+
+### Fase 1 — MVP MySQL · 🟡 funcional, pendiente de release
+- [x] Setup y login, vault, perfiles de conexión con TLS.
+- [x] Explorador, grilla con filtros, orden, paginación y edición de filas.
+- [x] Consola SQL con límites, confirmaciones y solo lectura reforzado.
+- [x] Exportación en streaming.
+- [ ] **Criterios de salida de v0.1.0** (todos obligatorios):
+  - CI en verde en `main`.
+  - Prueba E2E automatizada (Playwright) del flujo: setup → crear y probar conexión → abrir tabla → editar fila → consulta SQL → exportar.
+  - Recorrido manual de Modificar, Nuevo registro y Exportar tras la división de vistas.
+  - Imagen publicada y firmada; verificación de la firma documentada.
+  - Verificar disponibilidad del nombre (GitHub, GHCR, dominio, marca).
+- **Entregable:** `v0.1.0`.
+
+### Fase 2 — Conectividad segura · 🟡 mayoría hecha
+- [x] Túnel SSH (OpenSSH/PPK, agente, contraseña, bastión, huella fijada).
+- [x] 2FA TOTP con códigos de recuperación; modos `personal`/`team` ([ADR 0004](adr/0004-modos-personal-y-equipo.md)).
+- [x] Auditoría v1 ([ADR 0003](adr/0003-auditoria-append-only-encadenada.md)).
+- [ ] Cancelar una consulta en curso desde la interfaz (`KILL QUERY`).
+- [ ] Panel de sesiones activas con revocación.
+- [ ] Validar certificados de cliente MySQL en la matriz de integración.
+- [ ] mTLS para acceder a DByson + comando para emitir certificados de cliente.
+- **Entregable:** `v0.2.0`, apto para producción remota en uso personal.
+
+### Fase 3 — Productividad · 🟡 iniciada
+- [x] Pestañas agrupadas por tabla, paleta de comandos, consultas con nombre y archivos `.sql`.
+- [ ] Editor SQL con CodeMirror 6: resaltado, autocompletado por esquema, ejecutar selección.
+- [ ] Consultas guardadas en el servidor (opt-in) y snippets.
+- [ ] Navegación por claves foráneas.
+- [ ] EXPLAIN visual.
+- [ ] Importación CSV/SQL con progreso.
+- [ ] Editor visual de estructura con vista previa del DDL.
+- [ ] Lista de procesos con *kill*; usuarios y permisos de MySQL (`GRANT`).
+- [ ] Diagrama ER.
+- [ ] Passkeys/WebAuthn.
+- **Entregable:** `v0.5.0`, el equipo deja Adminer/phpMyAdmin para el trabajo diario.
+
+### Fase 4 — Equipos · ⬜ base preparada
+- [x] Modo `team` y aislamiento de perfiles por usuario.
+- [x] Exportación/importación de perfiles `.dbyson`.
+- [ ] **Gestión de usuarios** (hoy solo existe el administrador inicial).
+- [ ] Roles y permisos por conexión y entorno.
+- [ ] Conexiones compartidas con administración central.
+- [ ] SSO OIDC (Google, Microsoft Entra ID, Keycloak).
+- [ ] Auditoría: filtros por usuario, exportación, retención, envío a SIEM.
+- [ ] Exigir clave maestra externa en modo `team`; comando de rotación.
+- [ ] Guía de despliegue con HTTPS y VPN/zero-trust.
+- [ ] **Pentest externo** antes de la v1.0.
+- [ ] Retirar la compatibilidad con `ADMINBASE_*`.
+- **Entregable:** `v1.0.0`.
+
+### Fase 5+ — Expansión · ⬜
+- [ ] Extraer el contrato de drivers con capacidades por motor.
+- [ ] PostgreSQL → SQLite → SQL Server.
+- [ ] App de escritorio (Wails).
+- [ ] Asistente IA opcional (solo esquema, opt-in explícito).
+- [ ] Comparación de esquemas, respaldos programados, API pública.
 
 ---
 
-## 9. Riesgos y mitigaciones
+## 9. Calidad y pruebas
+
+| Tipo | Hoy | Falta |
+|---|---|---|
+| Unitarias Go | Auth, TOTP (vectores RFC 6238), vault, auditoría, migraciones, política SQL y de hosts, API, túneles, configuración | — |
+| Integración | MySQL 8.4 y MariaDB 11.4 (local y en CI), SSH real con bastión | MySQL 8.0 y 9.x, MariaDB 10.11; certificados de cliente |
+| Frontend | Tipado estricto y formato en CI | Pruebas unitarias (Vitest) de `catalog.ts` y `sqlFile.ts` |
+| Extremo a extremo | Recorridos manuales en navegador | **Playwright en CI** (criterio de v0.1.0) |
+| Fuzzing | — | Clasificador SQL y lector de archivos `.dbyson` |
+| Rendimiento | — | Abrir una tabla de 1M filas < 1 s; exportar 1 GB con < 100 MB de RAM |
+
+---
+
+## 10. Riesgos
 
 | Riesgo | Mitigación |
 |---|---|
-| Alcance infinito (querer ser DataGrip desde el inicio) | Fases con entregables usables; todo lo no listado va a un backlog. |
-| Una herramienta de BD comprometida = todas las BD comprometidas | Seguridad como requisito de cada fase, no al final; escucha en localhost por defecto; pentest antes de v1.0. |
-| Diferencias entre versiones de MySQL/MariaDB | Matriz de tests de integración desde la fase 1. |
-| Resultados enormes que tumban el navegador o el servidor | Streaming, paginación por cursor, límites por defecto, virtualización. |
-| Tipos complicados (BLOB, JSON, GEOMETRY, fechas cero, charsets) | Representación tipada en la API, visores dedicados, tests específicos. |
-| El nombre "DByson" ya en uso | Verificar marca, dominio (`adminbase.dev`/`.io`), namespace de Docker Hub y org de GitHub antes de publicar. |
+| Alcance infinito | Criterios de salida por versión; lo no listado va al backlog. |
+| Una herramienta de BD comprometida da acceso a todas las BD | Seguridad en cada fase, localhost por defecto, modelo de amenazas vivo, pentest antes de v1.0. |
+| Publicar en modo `personal` con el puerto abierto a la red | Aviso en el log y documentación; recomendar `team` + HTTPS. |
+| `master.key` junto a los datos | Documentado; exigir clave externa en modo `team`. |
+| Diferencias entre versiones de MySQL/MariaDB | Ampliar la matriz de integración. |
+| Resultados enormes | Límites de filas y bytes, exportación en streaming. |
+| Frontend difícil de mantener | Vistas separadas, Prettier en CI; añadir pruebas unitarias del frontend. |
+| Nombre "DByson" ya en uso | Verificar GitHub, GHCR, dominio y marca antes de v0.1.0. |
+| El CI nunca se ejecutó | Es el primer paso del próximo hito. |
 
 ---
 
-## 10. Métricas de éxito
-- De `docker run` a la primera consulta en **< 60 segundos**.
-- Imagen Docker **< 30 MB**, arranque **< 1 s**.
-- **0 vulnerabilidades críticas/altas** abiertas en cada release.
-- El equipo deja de usar Adminer/phpMyAdmin para el trabajo diario tras la v0.5.
+## 11. Métricas de éxito
+
+| Métrica | Objetivo | Hoy |
+|---|---|---|
+| De `docker run` a la primera consulta | < 60 s | Cumple en local (sin medición formal). |
+| Tamaño de imagen | < 40 MB | ~38 MB (el logo de 1,7 MB está pendiente de sustituir). |
+| Vulnerabilidades críticas/altas en cada release | 0 | Pendiente de la primera ejecución de Trivy en CI. |
+| Recargas al cambiar de pestaña o vista | 0 | 0 (medido contando peticiones). |
+| Adopción | El equipo deja Adminer/phpMyAdmin tras la v0.5 | — |
 
 ---
 
-## 11. Próximos pasos inmediatos
-1. Brechas de implementación del MVP cerradas: solo lectura reforzado, resultados limitados, streaming y confirmaciones contextuales. Véase [detalle y pruebas](MVP_SEGURIDAD.md).
-2. Validar flujos integrados en MySQL/MariaDB y reconciliar CSP con la interfaz.
-3. Completar licencia, ADRs y modelo de amenazas; verificar CI antes de publicar `v0.1.0`.
-4. Experiencia de consulta implementada: filtros con Mostrar, cancelación, conteo opcional, copia y detalle de registros. Véase [comportamiento y validación](EXPERIENCIA_CONSULTA.md). Implementado además SSH y revisión del inicio/asistente/pestañas, detección Docker y perfiles compartibles. Véase [SSH y espacios de trabajo](SSH_Y_ESPACIOS.md). Vistas internas agrupadas por tabla, cierre con rueda, preferencias/temas, historial de sesión, modo Sólo ver e inspector implementados: [interfaz y preferencias](INTERFAZ_Y_PREFERENCIAS.md). Después: auditoría, TOTP, consultas guardadas y editor SQL avanzado.
+## 12. Cambios respecto al plan original
 
-El detalle, evidencia y criterios de cierre están en [Evaluación del 21 de octubre de 2026](EVALUACION_2026-10-21.md).
+| Plan original | Cambio | Motivo |
+|---|---|---|
+| Nombre AdminBase | **DByson** en todo, salvo etiquetas criptográficas | Identidad del producto; renombrar antes de publicar es más barato ([ADR 0006](adr/0006-renombrado-a-dbyson.md)). |
+| 2FA obligatoria para producción | Depende de `DBYSON_MODE` | En uso personal no protege y añade fricción ([ADR 0004](adr/0004-modos-personal-y-equipo.md)). |
+| Archivo `.abx` cifrado con `age` | Archivo `.dbyson` con Argon2id + XChaCha20-Poly1305 | Sin dependencia externa; claves SSH siempre fuera del paquete. |
+| TanStack Query, Tailwind, CodeMirror | CSS propio y caché propia; CodeMirror aún pendiente | Menos dependencias; adoptar CodeMirror cuando llegue el editor avanzado. |
+| WebSocket para streaming y cancelación | HTTP con cancelación vía `AbortController` | Suficiente hasta tener tareas largas con progreso. |
+| Contrato de drivers desde el día 1 | Implementación directa de MySQL | Se extraerá antes del segundo motor. |
+| Docker Hub y GHCR | GHCR primero | Integrado con GitHub Actions y la firma keyless. |
+| Grilla virtualizada | Paginación con límites de filas y bytes | Evita cargar millones de filas en el navegador. |
+| — | Descubrimiento de MySQL en Docker con sidecar aislado | Facilita conectar a bases locales en contenedores. |
+| — | Caché compartida de metadatos | Eliminar recargas entre pestañas ([ADR 0005](adr/0005-cache-de-metadatos-en-el-frontend.md)). |
+
+---
+
+## 13. Próximos pasos inmediatos
+
+1. **Push de la rama y primera ejecución del CI;** corregir lo que falle.
+2. **Integrar en `main`** las ramas `feat/2fa-auditoria`, `feat/workspace-fase0` y el renombrado.
+3. **Prueba E2E con Playwright** del flujo principal y recorrido manual de Modificar, Nuevo registro y Exportar.
+4. **Verificar el nombre** y publicar `v0.1.0` firmada.
+5. Fase 2 restante: cancelar consultas desde la interfaz y panel de sesiones.
+6. Fase 3: CodeMirror 6 con autocompletado y consultas guardadas.

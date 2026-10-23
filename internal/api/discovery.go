@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gaboiv/dbyson/internal/config"
 	"io"
 	"net"
 	"net/http"
@@ -14,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/tunnel"
+	"github.com/gaboiv/dbyson/internal/tunnel"
 )
 
 type serviceHint struct {
@@ -83,7 +84,7 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 		for _, p := range []int{3307, 3308} {
 			candidates = append(candidates, serviceHint{Host: "host.docker.internal", Port: p, Source: "Puerto publicado"})
 		}
-		if endpoint := os.Getenv("ADMINBASE_DOCKER_DISCOVERY_URL"); endpoint != "" {
+		if endpoint := config.Get("DOCKER_DISCOVERY_URL"); endpoint != "" {
 			dockerHints, nets, e := dockerInventory(ctx, endpoint)
 			if e == nil {
 				out.DockerAvailable = true

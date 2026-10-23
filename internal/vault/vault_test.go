@@ -65,8 +65,8 @@ func TestUniqueCiphertexts(t *testing.T) {
 }
 
 func TestLoadKeyGeneratesAndReuses(t *testing.T) {
-	t.Setenv("ADMINBASE_MASTER_KEY", "")
-	t.Setenv("ADMINBASE_MASTER_KEY_FILE", "")
+	t.Setenv("DBYSON_MASTER_KEY", "")
+	t.Setenv("DBYSON_MASTER_KEY_FILE", "")
 	dir := t.TempDir()
 	k1, err := LoadKey(dir)
 	if err != nil {
@@ -82,8 +82,16 @@ func TestLoadKeyGeneratesAndReuses(t *testing.T) {
 }
 
 func TestLoadKeyRejectsBadEnv(t *testing.T) {
-	t.Setenv("ADMINBASE_MASTER_KEY", "dG9vc2hvcnQ=")
+	t.Setenv("DBYSON_MASTER_KEY", "dG9vc2hvcnQ=")
 	if _, err := LoadKey(t.TempDir()); err == nil {
 		t.Fatal("short key must be rejected")
+	}
+}
+
+// The domain label is bound into every stored ciphertext; renaming it (e.g. to match the product
+// name) would make every saved credential undecryptable. This test exists to stop that.
+func TestCryptoDomainIsStable(t *testing.T) {
+	if cryptoDomain != "adminbase/v1/" {
+		t.Fatalf("cryptoDomain changed to %q: existing vaults would no longer decrypt", cryptoDomain)
 	}
 }

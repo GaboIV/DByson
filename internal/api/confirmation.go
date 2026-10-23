@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gaboiv/dbyson/internal/audit"
 )
 
 type confirmationInput struct {
@@ -45,6 +47,7 @@ func (s *Server) requireConfirmation(w http.ResponseWriter, r *http.Request, act
 		token := hex.EncodeToString(bytes)
 		s.confirmations.Store(token, confirmationChallenge{binding, time.Now().Add(5 * time.Minute)})
 		name, _, _ := strings.Cut(action, "\n")
+		auditFrom(r).entry.Outcome = audit.OutcomeConfirmationRequested // nothing executed yet
 		writeJSON(w, http.StatusOK, map[string]any{"needsConfirmation": true, "operation": name, "reason": reason, "confirmationTarget": target, "confirmationToken": token, "preview": preview})
 		return false
 	}

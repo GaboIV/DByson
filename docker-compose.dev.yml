@@ -34,14 +34,14 @@ services:
       timeout: 5s
       retries: 20
 
-  # AdminBase empaquetado (perfil opcional): docker compose --profile app up --build
-  adminbase:
+  # DByson empaquetado (perfil opcional): docker compose --profile app up --build
+  dbyson:
     profiles: ["app"]
     build: .
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - adminbase-data:/data
+      - dbyson-data:/data
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -49,4 +49,4 @@ services:
 volumes:
   mysql-data:
   mariadb-data:
-  adminbase-data:
+  dbyson-data:

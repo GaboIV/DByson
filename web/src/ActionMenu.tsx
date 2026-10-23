@@ -1,9 +1,111 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-export interface MenuAction {label:string;onClick:()=>void;disabled?:boolean;danger?:boolean}
-export function ActionMenu({label,actions}:{label:string;actions:MenuAction[]}){
- const [open,setOpen]=useState(false),[position,setPosition]=useState({left:0,top:0});const button=useRef<HTMLButtonElement>(null),menu=useRef<HTMLDivElement>(null);
- useLayoutEffect(()=>{if(!open)return;const r=button.current!.getBoundingClientRect(),m=menu.current!.getBoundingClientRect();setPosition({left:Math.max(8,Math.min(r.left,innerWidth-m.width-8)),top:r.bottom+m.height+8>innerHeight?Math.max(8,r.top-m.height-4):r.bottom+4});menu.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();},[open]);
- useEffect(()=>{if(!open)return;const close=(e:Event)=>{if(!menu.current?.contains(e.target as Node)&&!button.current?.contains(e.target as Node))setOpen(false);};const scroll=()=>setOpen(false);document.addEventListener("pointerdown",close);window.addEventListener("scroll",scroll,true);window.addEventListener("resize",scroll);return()=>{document.removeEventListener("pointerdown",close);window.removeEventListener("scroll",scroll,true);window.removeEventListener("resize",scroll);};},[open]);
- return <><button ref={button} className="row-more" aria-label={label} title="Más acciones" aria-haspopup="menu" aria-expanded={open} onClick={()=>setOpen(v=>!v)}>•••</button>{open&&createPortal(<div ref={menu} className="row-action-menu" role="menu" aria-label={label} style={position} onKeyDown={e=>{const items=[...e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];const i=items.indexOf(document.activeElement as HTMLButtonElement);if(e.key==="Escape"){e.preventDefault();setOpen(false);button.current?.focus();}else if(["ArrowDown","ArrowUp","Home","End"].includes(e.key)){e.preventDefault();items[e.key==="Home"?0:e.key==="End"?items.length-1:(i+(e.key==="ArrowDown"?1:-1)+items.length)%items.length]?.focus();}else if(e.key==="Tab")setOpen(false);}}>{actions.map(action=><button key={action.label} role="menuitem" className={action.danger?"link-danger":""} disabled={action.disabled} onClick={()=>{setOpen(false);button.current?.focus();action.onClick();}}>{action.label}</button>)}</div>,document.body)}</>;
+export interface MenuAction {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}
+export function ActionMenu({
+  label,
+  actions,
+  trigger = "•••",
+  triggerClass = "row-more",
+  title = "Más acciones",
+}: {
+  label: string;
+  actions: MenuAction[];
+  trigger?: ReactNode;
+  triggerClass?: string;
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false),
+    [position, setPosition] = useState({ left: 0, top: 0 });
+  const button = useRef<HTMLButtonElement>(null),
+    menu = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const r = button.current!.getBoundingClientRect(),
+      m = menu.current!.getBoundingClientRect();
+    setPosition({
+      left: Math.max(8, Math.min(r.left, innerWidth - m.width - 8)),
+      top: r.bottom + m.height + 8 > innerHeight ? Math.max(8, r.top - m.height - 4) : r.bottom + 4,
+    });
+    menu.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (!menu.current?.contains(e.target as Node) && !button.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const scroll = () => setOpen(false);
+    document.addEventListener("pointerdown", close);
+    window.addEventListener("scroll", scroll, true);
+    window.addEventListener("resize", scroll);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      window.removeEventListener("scroll", scroll, true);
+      window.removeEventListener("resize", scroll);
+    };
+  }, [open]);
+  return (
+    <>
+      <button
+        ref={button}
+        className={triggerClass}
+        aria-label={label}
+        title={title}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {trigger}
+      </button>
+      {open &&
+        createPortal(
+          <div
+            ref={menu}
+            className="row-action-menu"
+            role="menu"
+            aria-label={label}
+            style={position}
+            onKeyDown={(e) => {
+              const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+              const i = items.indexOf(document.activeElement as HTMLButtonElement);
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setOpen(false);
+                button.current?.focus();
+              } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+                e.preventDefault();
+                items[
+                  e.key === "Home"
+                    ? 0
+                    : e.key === "End"
+                      ? items.length - 1
+                      : (i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length
+                ]?.focus();
+              } else if (e.key === "Tab") setOpen(false);
+            }}
+          >
+            {actions.map((action) => (
+              <button
+                key={action.label}
+                role="menuitem"
+                className={action.danger ? "link-danger" : ""}
+                disabled={action.disabled}
+                onClick={() => {
+                  setOpen(false);
+                  button.current?.focus();
+                  action.onClick();
+                }}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
+  );
 }

@@ -3,27 +3,204 @@ import { setViewOnly } from "./api";
 import { Dialog } from "./Dialog";
 import { useClipboard } from "./clipboard";
 export type Theme = "system" | "light" | "dark" | "midnight" | "payaso";
-export interface Preferences {theme:Theme;showQueries:boolean;viewOnly:boolean;compact:boolean;stripes:boolean;pinActions:boolean;rowNumbers:boolean}
-const defaults:Preferences={theme:"system",showQueries:true,viewOnly:false,compact:false,stripes:false,pinActions:true,rowNumbers:false};
-export interface QueryEntry {id:string;sql:string;truncated?:boolean;database?:string;path:string;at:number;ms:number;ok:boolean}
-const Context=createContext({preferences:defaults,update:(_p:Partial<Preferences>)=>{},queries:[] as QueryEntry[],clearQueries:()=>{}});
-export const usePreferences=()=>useContext(Context);
-export function PreferencesProvider({username,children}:{username:string;children:ReactNode}){
- const key=`dbyson:${username}:preferences`;
- const [preferences,setPreferences]=useState<Preferences>(()=>{try{const v=JSON.parse(localStorage.getItem(key)||"{}");const valid={...defaults};if(["system","light","dark","midnight","payaso"].includes(v.theme))valid.theme=v.theme;for(const k of Object.keys(defaults) as (keyof Preferences)[])if(k!=="theme"&&typeof v[k]==="boolean")Object.assign(valid,{[k]:v[k]});return valid;}catch{return defaults;}});
- const [queries,setQueries]=useState<QueryEntry[]>([]);
- function update(p:Partial<Preferences>){if(p.viewOnly!==undefined)setViewOnly(p.viewOnly);setPreferences(old=>({...old,...p}));}
- useLayoutEffect(()=>{const d=document.documentElement.dataset;d.theme=preferences.theme;d.density=preferences.compact?"compact":"comfortable";d.stripes=String(preferences.stripes);d.pinActions=String(preferences.pinActions);d.rowNumbers=String(preferences.rowNumbers);setViewOnly(preferences.viewOnly);try{localStorage.setItem(key,JSON.stringify(preferences));}catch{}},[preferences,key]);
- useEffect(()=>{const listener=(e:Event)=>{const entry=(e as CustomEvent<QueryEntry>).detail;setQueries(old=>[entry,...old].slice(0,50));};window.addEventListener("dbyson-query",listener);return()=>{window.removeEventListener("dbyson-query",listener);setViewOnly(false);};},[]);
- return <Context.Provider value={{preferences,update,queries,clearQueries:()=>setQueries([])}}>{children}</Context.Provider>;
+export interface Preferences {
+  theme: Theme;
+  showQueries: boolean;
+  viewOnly: boolean;
+  compact: boolean;
+  stripes: boolean;
+  pinActions: boolean;
+  rowNumbers: boolean;
 }
-export function PreferencesDialog({onClose,onHistory}:{onClose:()=>void;onHistory:()=>void}){
- const {preferences:p,update}=usePreferences();
- return <Dialog title="Preferencias del espacio" onClose={onClose}><div className="settings-section"><h4>Apariencia</h4><div className="theme-options">{([["system","Sistema"],["light","Claro"],["dark","Oscuro"],["midnight","Medianoche"],["payaso","Payaso 🎪"]] as [Theme,string][]).map(([theme,label])=><button key={theme} className={`theme-choice theme-${theme}`} aria-pressed={p.theme===theme} onClick={()=>update({theme})}><span aria-hidden="true"/><strong>{label}</strong></button>)}</div><p className="muted">Payaso distingue cada sección con color y conserva neutros los datos.</p></div>
- <div className="settings-section"><h4>Consultas y protección</h4><label className="setting-toggle"><span><strong>Ver queries</strong><small>Muestra el SQL de la vista actual.</small></span><input type="checkbox" checked={p.showQueries} onChange={e=>update({showQueries:e.target.checked})}/></label><label className="setting-toggle"><span><strong>Sólo ver</strong><small>Bloquea escritura en las nuevas solicitudes a bases de datos. No cambia los permisos del perfil ni cancela operaciones ya enviadas.</small></span><input type="checkbox" checked={p.viewOnly} onChange={e=>update({viewOnly:e.target.checked})}/></label><button onClick={onHistory}>Consultas recientes de esta sesión</button></div>
- <div className="settings-section"><h4>Tabla de datos</h4>{([["compact","Filas compactas","Más registros en el mismo espacio."],["stripes","Filas alternadas","Facilita seguir una fila a lo ancho."],["pinActions","Fijar acciones","Detalle y acciones siguen visibles al desplazarte."],["rowNumbers","Numerar filas","Muestra la posición dentro del resultado."]] as const).map(([key,label,help])=><label className="setting-toggle" key={key}><span><strong>{label}</strong><small>{help}</small></span><input type="checkbox" checked={p[key]} onChange={e=>update({[key]:e.target.checked})}/></label>)}</div><p className="muted">Preferencias de este usuario en este navegador. No se incluyen en perfiles compartidos.</p><button onClick={()=>update({...defaults,viewOnly:p.viewOnly})}>Restablecer apariencia y tabla</button></Dialog>;
+const defaults: Preferences = {
+  theme: "system",
+  showQueries: true,
+  viewOnly: false,
+  compact: false,
+  stripes: false,
+  pinActions: true,
+  rowNumbers: false,
+};
+export interface QueryEntry {
+  id: string;
+  sql: string;
+  truncated?: boolean;
+  database?: string;
+  path: string;
+  at: number;
+  ms: number;
+  ok: boolean;
 }
-export function QueryHistoryDialog({onClose,onOpen}:{onClose:()=>void;onOpen?:(entry:QueryEntry)=>void}){
- const {queries,clearQueries}=usePreferences(),{copy,copyNotice}=useClipboard();const [search,setSearch]=useState("");
- return <Dialog title="Consultas recientes" onClose={onClose}><div className="section-heading"><p className="muted">Últimas 50 consultas recibidas en esta sesión. Se borran al recargar o salir.</p><button onClick={clearQueries} disabled={!queries.length}>Limpiar historial</button></div><label>Buscar SQL<input type="search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Tabla, columna o sentencia…"/></label><div className="query-history-list">{queries.filter(q=>q.sql.toLowerCase().includes(search.toLowerCase())).map(q=><article key={q.id}><header><time>{new Date(q.at).toLocaleTimeString()}</time><span>{q.ms} ms</span>{q.truncated&&<span className="muted">Vista previa recortada · 12.000 caracteres</span>}<span className={q.ok?"okmsg":"error"}>{q.ok?"Correcta":"Error"}</span></header><pre>{q.sql}</pre><footer><button onClick={()=>void copy(q.sql,"SQL copiado")}>Copiar</button>{onOpen&&<button disabled={q.truncated} title={q.truncated?"La vista previa está recortada; usa la consulta original completa":undefined} onClick={()=>onOpen(q)}>Abrir en SQL</button>}</footer></article>)}{!queries.length&&<p className="muted">Las próximas consultas aparecerán aquí. Este historial no es un registro de auditoría.</p>}</div>{copyNotice}</Dialog>;
+const Context = createContext({
+  preferences: defaults,
+  update: (_p: Partial<Preferences>) => {},
+  queries: [] as QueryEntry[],
+  clearQueries: () => {},
+});
+export const usePreferences = () => useContext(Context);
+export function PreferencesProvider({ username, children }: { username: string; children: ReactNode }) {
+  const key = `dbyson:${username}:preferences`;
+  const [preferences, setPreferences] = useState<Preferences>(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(key) || "{}");
+      const valid = { ...defaults };
+      if (["system", "light", "dark", "midnight", "payaso"].includes(v.theme)) valid.theme = v.theme;
+      for (const k of Object.keys(defaults) as (keyof Preferences)[])
+        if (k !== "theme" && typeof v[k] === "boolean") Object.assign(valid, { [k]: v[k] });
+      return valid;
+    } catch {
+      return defaults;
+    }
+  });
+  const [queries, setQueries] = useState<QueryEntry[]>([]);
+  function update(p: Partial<Preferences>) {
+    if (p.viewOnly !== undefined) setViewOnly(p.viewOnly);
+    setPreferences((old) => ({ ...old, ...p }));
+  }
+  useLayoutEffect(() => {
+    const d = document.documentElement.dataset;
+    d.theme = preferences.theme;
+    d.density = preferences.compact ? "compact" : "comfortable";
+    d.stripes = String(preferences.stripes);
+    d.pinActions = String(preferences.pinActions);
+    d.rowNumbers = String(preferences.rowNumbers);
+    setViewOnly(preferences.viewOnly);
+    try {
+      localStorage.setItem(key, JSON.stringify(preferences));
+    } catch {}
+  }, [preferences, key]);
+  useEffect(() => {
+    const listener = (e: Event) => {
+      const entry = (e as CustomEvent<QueryEntry>).detail;
+      setQueries((old) => [entry, ...old].slice(0, 50));
+    };
+    window.addEventListener("dbyson-query", listener);
+    return () => {
+      window.removeEventListener("dbyson-query", listener);
+      setViewOnly(false);
+    };
+  }, []);
+  return <Context.Provider value={{ preferences, update, queries, clearQueries: () => setQueries([]) }}>{children}</Context.Provider>;
+}
+export function PreferencesDialog({ onClose, onHistory }: { onClose: () => void; onHistory: () => void }) {
+  const { preferences: p, update } = usePreferences();
+  return (
+    <Dialog title="Preferencias del espacio" onClose={onClose}>
+      <div className="settings-section">
+        <h4>Apariencia</h4>
+        <div className="theme-options">
+          {(
+            [
+              ["system", "Sistema"],
+              ["light", "Claro"],
+              ["dark", "Oscuro"],
+              ["midnight", "Medianoche"],
+              ["payaso", "Payaso 🎪"],
+            ] as [Theme, string][]
+          ).map(([theme, label]) => (
+            <button
+              key={theme}
+              className={`theme-choice theme-${theme}`}
+              aria-pressed={p.theme === theme}
+              onClick={() => update({ theme })}
+            >
+              <span aria-hidden="true" />
+              <strong>{label}</strong>
+            </button>
+          ))}
+        </div>
+        <p className="muted">Payaso distingue cada sección con color y conserva neutros los datos.</p>
+      </div>
+      <div className="settings-section">
+        <h4>Consultas y protección</h4>
+        <label className="setting-toggle">
+          <span>
+            <strong>Ver queries</strong>
+            <small>Muestra el SQL de la vista actual.</small>
+          </span>
+          <input type="checkbox" checked={p.showQueries} onChange={(e) => update({ showQueries: e.target.checked })} />
+        </label>
+        <label className="setting-toggle">
+          <span>
+            <strong>Sólo ver</strong>
+            <small>
+              Bloquea escritura en las nuevas solicitudes a bases de datos. No cambia los permisos del perfil ni cancela operaciones ya
+              enviadas.
+            </small>
+          </span>
+          <input type="checkbox" checked={p.viewOnly} onChange={(e) => update({ viewOnly: e.target.checked })} />
+        </label>
+        <button onClick={onHistory}>Consultas recientes de esta sesión</button>
+      </div>
+      <div className="settings-section">
+        <h4>Tabla de datos</h4>
+        {(
+          [
+            ["compact", "Filas compactas", "Más registros en el mismo espacio."],
+            ["stripes", "Filas alternadas", "Facilita seguir una fila a lo ancho."],
+            ["pinActions", "Fijar acciones", "Detalle y acciones siguen visibles al desplazarte."],
+            ["rowNumbers", "Numerar filas", "Muestra la posición dentro del resultado."],
+          ] as const
+        ).map(([key, label, help]) => (
+          <label className="setting-toggle" key={key}>
+            <span>
+              <strong>{label}</strong>
+              <small>{help}</small>
+            </span>
+            <input type="checkbox" checked={p[key]} onChange={(e) => update({ [key]: e.target.checked })} />
+          </label>
+        ))}
+      </div>
+      <p className="muted">Preferencias de este usuario en este navegador. No se incluyen en perfiles compartidos.</p>
+      <button onClick={() => update({ ...defaults, viewOnly: p.viewOnly })}>Restablecer apariencia y tabla</button>
+    </Dialog>
+  );
+}
+export function QueryHistoryDialog({ onClose, onOpen }: { onClose: () => void; onOpen?: (entry: QueryEntry) => void }) {
+  const { queries, clearQueries } = usePreferences(),
+    { copy, copyNotice } = useClipboard();
+  const [search, setSearch] = useState("");
+  return (
+    <Dialog title="Consultas recientes" onClose={onClose}>
+      <div className="section-heading">
+        <p className="muted">Últimas 50 consultas recibidas en esta sesión. Se borran al recargar o salir.</p>
+        <button onClick={clearQueries} disabled={!queries.length}>
+          Limpiar historial
+        </button>
+      </div>
+      <label>
+        Buscar SQL
+        <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tabla, columna o sentencia…" />
+      </label>
+      <div className="query-history-list">
+        {queries
+          .filter((q) => q.sql.toLowerCase().includes(search.toLowerCase()))
+          .map((q) => (
+            <article key={q.id}>
+              <header>
+                <time>{new Date(q.at).toLocaleTimeString()}</time>
+                <span>{q.ms} ms</span>
+                {q.truncated && <span className="muted">Vista previa recortada · 12.000 caracteres</span>}
+                <span className={q.ok ? "okmsg" : "error"}>{q.ok ? "Correcta" : "Error"}</span>
+              </header>
+              <pre>{q.sql}</pre>
+              <footer>
+                <button onClick={() => void copy(q.sql, "SQL copiado")}>Copiar</button>
+                {onOpen && (
+                  <button
+                    disabled={q.truncated}
+                    title={q.truncated ? "La vista previa está recortada; usa la consulta original completa" : undefined}
+                    onClick={() => onOpen(q)}
+                  >
+                    Abrir en SQL
+                  </button>
+                )}
+              </footer>
+            </article>
+          ))}
+        {!queries.length && <p className="muted">Las próximas consultas aparecerán aquí. Este historial no es un registro de auditoría.</p>}
+      </div>
+      {copyNotice}
+    </Dialog>
+  );
 }

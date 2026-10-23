@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/policy"
-	"github.com/adminbase/adminbase/internal/tunnel"
+	"github.com/gaboiv/dbyson/internal/policy"
+	"github.com/gaboiv/dbyson/internal/tunnel"
 )
 
 func TestIntegrationSSHTunnel(t *testing.T) {

@@ -10,10 +10,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/adminbase/adminbase/internal/auth"
+	"github.com/gaboiv/dbyson/internal/audit"
+	"github.com/gaboiv/dbyson/internal/auth"
 )
 
-const cookieName = "ab_session"
+const cookieName = "dbyson_session"
 
 type ctxKey struct{}
 
@@ -36,15 +37,40 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
-		switch r.Method {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-		default:
-			if !sess.CSRFMatches(r.Header.Get("X-CSRF-Token")) {
-				writeError(w, http.StatusForbidden, "invalid CSRF token")
-				return
-			}
+		ctx := context.WithValue(r.Context(), ctxKey{}, sess)
+		safe := r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions
+		action := actionNames[r.Pattern]
+		if action == "" {
+			action = r.Pattern
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, sess)))
+		rec := &auditRecord{entry: audit.Entry{
+			UserID: sess.UserID, Username: sess.Username, IP: clientIP(r), Action: action,
+			ConnectionID: r.PathValue("id"), Target: auditTarget(r),
+		}}
+		ctx = context.WithValue(ctx, auditKey{}, rec)
+		r = r.WithContext(ctx)
+
+		if !safe && !sess.CSRFMatches(r.Header.Get("X-CSRF-Token")) {
+			rec.entry.Outcome, rec.entry.Detail = audit.OutcomeDenied, "invalid CSRF token"
+			s.record(ctx, rec.entry)
+			writeError(w, http.StatusForbidden, "invalid CSRF token")
+			return
+		}
+		// Policy "all": only sign-in and 2FA management are reachable without a verified session.
+		if s.MFAPolicy == MFAPolicyAll && !sess.MFA && !strings.HasPrefix(r.URL.Path, "/api/auth/") {
+			writeMFARequired(w)
+			return
+		}
+
+		sw := &statusWriter{ResponseWriter: w}
+		next(sw, r)
+		if rec.skip || (safe && !rec.force) {
+			return
+		}
+		if rec.entry.Outcome == "" {
+			rec.entry.Outcome = outcomeFor(sw.status)
+		}
+		s.record(ctx, rec.entry)
 	})
 }
 
@@ -82,19 +108,28 @@ func clientIP(r *http.Request) string {
 }
 
 type sessionResponse struct {
-	Username string `json:"username"`
-	Role     string `json:"role"`
-	CSRF     string `json:"csrf"`
+	Username   string `json:"username"`
+	Role       string `json:"role"`
+	CSRF       string `json:"csrf"`
+	MFA        bool   `json:"mfa"`        // this session was verified with a second factor
+	MFAEnabled bool   `json:"mfaEnabled"` // the account has 2FA configured
+	MFAPolicy  string `json:"mfaPolicy"`
 }
 
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int64, username, role string) {
-	token, csrf, err := s.sessions.Create(r.Context(), userID)
+func (s *Server) sessionView(ctx context.Context, userID int64, username, role, csrf string, mfa bool) sessionResponse {
+	var enabled bool
+	_ = s.Store.DB.QueryRowContext(ctx, `SELECT totp_enabled FROM users WHERE id = ?`, userID).Scan(&enabled)
+	return sessionResponse{Username: username, Role: role, CSRF: csrf, MFA: mfa, MFAEnabled: enabled, MFAPolicy: s.MFAPolicy}
+}
+
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int64, username, role string, mfa bool) {
+	token, csrf, err := s.sessions.Create(r.Context(), userID, mfa)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
 	}
 	setCookie(w, r, token)
-	writeJSON(w, http.StatusOK, sessionResponse{Username: username, Role: role, CSRF: csrf})
+	writeJSON(w, http.StatusOK, s.sessionView(r.Context(), userID, username, role, csrf, mfa))
 }
 
 func (s *Server) userCount(ctx context.Context) (int, error) {
@@ -177,7 +212,8 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
-	s.startSession(w, r, id, in.Username, "admin")
+	s.record(r.Context(), audit.Entry{UserID: id, Username: in.Username, IP: clientIP(r), Action: "auth.setup", Outcome: audit.OutcomeOK})
+	s.startSession(w, r, id, in.Username, "admin", false)
 }
 
 func tooManyAttempts(w http.ResponseWriter, wait time.Duration) {
@@ -193,11 +229,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	userKey := "login|" + ip + "|" + strings.ToLower(in.Username)
 	ipKey := "login|" + ip
-	if blocked, wait := s.throttle.Blocked(userKey); blocked {
-		tooManyAttempts(w, wait)
-		return
-	}
-	if blocked, wait := s.ipThrottle.Blocked(ipKey); blocked {
+	attempt := audit.Entry{Username: truncateRunes(in.Username, 64), IP: ip, Action: "auth.login"}
+	blockedUser, wait := s.throttle.Blocked(userKey)
+	blockedIP, waitIP := s.ipThrottle.Blocked(ipKey)
+	if blockedUser || blockedIP {
+		if blockedIP && waitIP > wait {
+			wait = waitIP
+		}
+		attempt.Outcome, attempt.Detail = audit.OutcomeDenied, "throttled"
+		s.record(r.Context(), attempt)
 		tooManyAttempts(w, wait)
 		return
 	}
@@ -221,11 +261,41 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		s.throttle.Fail(userKey)
 		s.ipThrottle.Fail(ipKey) // slows username spraying from a single address
+		attempt.Outcome, attempt.Detail = audit.OutcomeDenied, "invalid credentials"
+		s.record(r.Context(), attempt)
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
 	s.throttle.Reset(userKey)
-	s.startSession(w, r, id, name, role)
+	attempt.UserID, attempt.Username = id, name
+
+	var mfaEnabled bool
+	if err := s.Store.DB.QueryRowContext(r.Context(), `SELECT totp_enabled FROM users WHERE id = ?`, id).Scan(&mfaEnabled); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if mfaEnabled {
+		// Password accepted, but no session until the second factor is verified.
+		token, err := s.mfaPending.create(id, name, role)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "try again later")
+			return
+		}
+		attempt.Outcome, attempt.Detail = audit.OutcomeOK, "password accepted; second factor pending"
+		s.record(r.Context(), attempt)
+		writeJSON(w, http.StatusOK, map[string]any{"mfaRequired": true, "mfaToken": token})
+		return
+	}
+	attempt.Outcome = audit.OutcomeOK
+	s.record(r.Context(), attempt)
+	s.startSession(w, r, id, name, role, false)
+}
+
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -238,5 +308,5 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r)
-	writeJSON(w, http.StatusOK, sessionResponse{Username: sess.Username, Role: sess.Role, CSRF: sess.CSRF})
+	writeJSON(w, http.StatusOK, s.sessionView(r.Context(), sess.UserID, sess.Username, sess.Role, sess.CSRF, sess.MFA))
 }

@@ -1,4 +1,4 @@
-// Package api exposes the HTTP surface of AdminBase.
+// Package api exposes the HTTP surface of DByson.
 package api
 
 import (
@@ -9,10 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/auth"
-	"github.com/adminbase/adminbase/internal/policy"
-	"github.com/adminbase/adminbase/internal/store"
-	"github.com/adminbase/adminbase/internal/vault"
+	"github.com/gaboiv/dbyson/internal/audit"
+	"github.com/gaboiv/dbyson/internal/auth"
+	"github.com/gaboiv/dbyson/internal/policy"
+	"github.com/gaboiv/dbyson/internal/store"
+	"github.com/gaboiv/dbyson/internal/vault"
 )
 
 // Deps are the collaborators the HTTP layer needs.
@@ -21,10 +22,13 @@ type Deps struct {
 	Vault      *vault.Vault
 	Policy     *policy.HostPolicy
 	SetupToken string // optional: required to create the first admin when set
+	Audit      *audit.Logger
+	MFAPolicy  string // off | sensitive | all (see mfa.go); empty means sensitive
 }
 
 type Server struct {
 	confirmations sync.Map // short-lived, single-use challenges
+	mfaPending    mfaChallenges
 	Deps
 	version  string
 	sessions *auth.Sessions
@@ -41,6 +45,13 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 		sessions:   auth.NewSessions(deps.Store.DB),
 		throttle:   auth.NewThrottle(5, 15*time.Minute, 15*time.Minute),
 		ipThrottle: auth.NewThrottle(30, 15*time.Minute, 15*time.Minute),
+		mfaPending: mfaChallenges{m: map[string]*mfaChallenge{}},
+	}
+	if s.MFAPolicy == "" {
+		s.MFAPolicy = MFAPolicySensitive
+	}
+	if s.Audit == nil && deps.Vault != nil {
+		s.Audit = audit.New(deps.Store.DB, deps.Vault.DeriveKey("audit"))
 	}
 	mux := http.NewServeMux()
 
@@ -56,6 +67,14 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.Handle("POST /api/auth/logout", s.requireAuth(s.handleLogout))
 	mux.Handle("GET /api/auth/me", s.requireAuth(s.handleMe))
+	mux.HandleFunc("POST /api/auth/mfa/verify", s.handleMFAVerify)
+	mux.Handle("GET /api/auth/mfa", s.requireAuth(s.handleMFAStatus))
+	mux.Handle("POST /api/auth/mfa/setup", s.requireAuth(s.handleMFASetup))
+	mux.Handle("POST /api/auth/mfa/enable", s.requireAuth(s.handleMFAEnable))
+	mux.Handle("POST /api/auth/mfa/disable", s.requireAuth(s.handleMFADisable))
+	mux.Handle("POST /api/auth/mfa/recovery-codes", s.requireAuth(s.handleMFARecoveryCodes))
+	mux.Handle("GET /api/audit", s.requireAuth(s.listAudit))
+	mux.Handle("GET /api/audit/verify", s.requireAuth(s.verifyAudit))
 
 	mux.Handle("GET /api/connections", s.requireAuth(s.listConnections))
 	mux.Handle("POST /api/connections", s.requireAuth(s.createConnection))

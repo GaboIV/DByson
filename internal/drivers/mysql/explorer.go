@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/adminbase/adminbase/internal/policy"
+	"github.com/gaboiv/dbyson/internal/policy"
 	"regexp"
 	"strings"
 	"time"

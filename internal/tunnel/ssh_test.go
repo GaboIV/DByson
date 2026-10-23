@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/policy"
+	"github.com/gaboiv/dbyson/internal/policy"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -205,7 +205,7 @@ func TestKeysAndDetachedReferences(t *testing.T) {
 	}
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "id_test"), []byte(open), 0600)
-	t.Setenv("ADMINBASE_SSH_KEY_DIR", dir)
+	t.Setenv("DBYSON_SSH_KEY_DIR", dir)
 	if _, e := signer(Hop{KeyFile: "id_test"}); e != nil {
 		t.Fatal(e)
 	}

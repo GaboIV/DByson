@@ -10,13 +10,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/drivers/mysql"
-	"github.com/adminbase/adminbase/internal/policy"
+	"github.com/gaboiv/dbyson/internal/audit"
+	"github.com/gaboiv/dbyson/internal/drivers/mysql"
+	"github.com/gaboiv/dbyson/internal/policy"
 )
 
 func (s *Server) openDB(ctx context.Context, r *http.Request, targetDB string) (*sql.DB, *connRecord, error) {
 	rec, sec, err := s.loadOwned(ctx, r)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.mfaGate(r, rec.Env, sec.SSH.Enabled); err != nil {
 		return nil, nil, err
 	}
 	rec.ReadOnly = rec.ReadOnly || r.Header.Get("X-DByson-Read-Only") == "1"
@@ -612,6 +616,8 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Query = strings.TrimSpace(req.Query)
+	ar := auditFrom(r)
+	ar.entry.Target, ar.entry.Detail = req.Database, req.Query
 	if req.Query == "" {
 		writeError(w, http.StatusBadRequest, "query cannot be empty")
 		return
@@ -649,6 +655,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	result, err := mysql.ExecuteSQL(ctx, db, req.Database, req.Query, 1000)
 	if err != nil {
+		ar.entry.Outcome = audit.OutcomeError
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":          false,
 			"error":       err.Error(),
@@ -684,6 +691,10 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 	includeStructure := r.URL.Query().Get("structure") != "0"
 	includeData := r.URL.Query().Get("data") != "0"
+	ar := auditFrom(r)
+	ar.force = true // exports are reads, but they move data out: always audited
+	ar.entry.Target = strings.Trim(dbName+"."+tableName, ".")
+	ar.entry.Detail = fmt.Sprintf("format=%s structure=%t data=%t", format, includeStructure, includeData)
 	if format == "sql" && !includeStructure && !includeData {
 		writeError(w, http.StatusBadRequest, "select structure or data for SQL export")
 		return

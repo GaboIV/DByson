@@ -6,11 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/drivers/mysql"
+	"github.com/gaboiv/dbyson/internal/drivers/mysql"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -62,6 +64,7 @@ func (s *Server) exportProfiles(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
+	auditFrom(r).entry.Detail = fmt.Sprintf("profiles=%d includeSecrets=%t ids=%s", len(in.IDs), in.IncludeSecrets, strings.Join(in.IDs, ","))
 	if len(in.IDs) < 1 || len(in.IDs) > 25 {
 		writeError(w, 400, "Selecciona entre 1 y 25 conexiones")
 		return
@@ -78,6 +81,10 @@ func (s *Server) exportProfiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		sec, err := s.openSecret(rec)
+		if err == nil && in.IncludeSecrets {
+			// Exporting credentials is as sensitive as using them.
+			err = s.mfaGate(r, rec.Env, sec.SSH.Enabled)
+		}
 		if err != nil {
 			s.fail(w, err)
 			return

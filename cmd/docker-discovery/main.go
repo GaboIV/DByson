@@ -1,16 +1,16 @@
 package main
 
 import (
+	"github.com/gaboiv/dbyson/internal/config"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
-	"github.com/adminbase/adminbase/internal/discoveryproxy"
+	"github.com/gaboiv/dbyson/internal/discoveryproxy"
 )
 
 func main() {
-	socket := os.Getenv("ADMINBASE_DOCKER_SOCKET")
+	socket := config.Get("DOCKER_SOCKET")
 	if socket == "" {
 		socket = "/var/run/docker.sock"
 	}

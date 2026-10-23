@@ -10,10 +10,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/adminbase/adminbase/internal/auth"
-	"github.com/adminbase/adminbase/internal/policy"
-	"github.com/adminbase/adminbase/internal/store"
-	"github.com/adminbase/adminbase/internal/vault"
+	"github.com/gaboiv/dbyson/internal/auth"
+	"github.com/gaboiv/dbyson/internal/policy"
+	"github.com/gaboiv/dbyson/internal/store"
+	"github.com/gaboiv/dbyson/internal/vault"
 )
 
 type testEnv struct {
@@ -22,7 +22,9 @@ type testEnv struct {
 	store   *store.Store
 }
 
-func newTestEnv(t *testing.T) *testEnv {
+func newTestEnv(t *testing.T) *testEnv { return newTestEnvWith(t, nil) }
+
+func newTestEnvWith(t *testing.T, configure func(*Deps)) *testEnv {
 	t.Helper()
 	st, err := store.Open(t.TempDir())
 	if err != nil {
@@ -34,7 +36,11 @@ func newTestEnv(t *testing.T) *testEnv {
 	v, _ := vault.New(key)
 	pol, _ := policy.ParseAllowlist("")
 	assets := fstest.MapFS{"index.html": {Data: []byte("<html>spa</html>")}}
-	return &testEnv{t: t, store: st, handler: NewRouter("test", assets, Deps{Store: st, Vault: v, Policy: pol})}
+	deps := Deps{Store: st, Vault: v, Policy: pol}
+	if configure != nil {
+		configure(&deps)
+	}
+	return &testEnv{t: t, store: st, handler: NewRouter("test", assets, deps)}
 }
 
 type client struct {

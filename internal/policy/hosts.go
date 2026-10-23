@@ -1,4 +1,4 @@
-// Package policy decides which network destinations AdminBase may connect to.
+// Package policy decides which network destinations DByson may connect to.
 package policy
 
 import (
@@ -10,7 +10,7 @@ import (
 )
 
 // HostPolicy blocks dangerous destinations always and, when an allowlist is set,
-// everything not on it. This keeps AdminBase from being used as an SSRF pivot.
+// everything not on it. This keeps DByson from being used as an SSRF pivot.
 type HostPolicy struct {
 	names    map[string]bool
 	prefixes []netip.Prefix

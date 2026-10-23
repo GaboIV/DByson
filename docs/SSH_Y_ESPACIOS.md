@@ -21,7 +21,7 @@ El inicio permite buscar por nombre, destino, usuario o base; filtrar por entorn
 
 Adjuntar una clave la envía al backend y la almacena cifrada en el vault. La API devuelve únicamente su nombre y si hay una clave almacenada. El navegador no puede abrir libremente una ruta de Windows/Linux del receptor.
 
-Para usar archivos del servidor, configurar `ADMINBASE_SSH_KEY_DIR=/keys` y montar un directorio de claves de solo lectura, legible por el usuario 65532 de DByson. La ruta introducida puede ser relativa a ese directorio (por ejemplo `equipo/servidor.ppk`) o absoluta dentro del mismo. La lectura usa `os.OpenRoot` para impedir escapes y symlinks hacia fuera; solo se aceptan archivos regulares.
+Para usar archivos del servidor, configurar `DBYSON_SSH_KEY_DIR=/keys` y montar un directorio de claves de solo lectura, legible por el usuario 65532 de DByson. La ruta introducida puede ser relativa a ese directorio (por ejemplo `equipo/servidor.ppk`) o absoluta dentro del mismo. La lectura usa `os.OpenRoot` para impedir escapes y symlinks hacia fuera; solo se aceptan archivos regulares.
 
 Un perfil compartido conserva `keyFile` y `keyLabel`, pero **nunca incluye las claves privadas SSH ni sus passphrases**, ni siquiera en la opción de compartir credenciales. El receptor coloca el archivo en la ruta equivalente de su instalación o lo adjunta de nuevo. La passphrase se introduce por separado. No basta con que el archivo esté en una ruta del equipo del navegador si DByson corre en otro servidor/contenedor.
 
@@ -52,7 +52,7 @@ Se muestran interfaces/redes visibles desde el servidor y, si está configurado 
 
 `deploy/docker-compose.local.yml` incluye un componente que recibe el socket Docker y expone únicamente GET /containers/json y GET /networks, sin parámetros, operaciones de escritura, inspección de secretos o rutas arbitrarias. Filtra los datos a nombres, puertos, IPs y subredes. La aplicación principal no recibe el socket.
 
-La aplicación lo consulta mediante `ADMINBASE_DOCKER_DISCOVERY_URL=http://discovery:8090`. El componente debe permanecer en una red interna privada, sin publicar su puerto; corre con raíz para acceder al socket, sin capacidades adicionales, sin privilegios nuevos y con filesystem de solo lectura. El socket sigue siendo un recurso privilegiado: este componente es opcional y debe aislarse como en el ejemplo. Al deshabilitarlo, siguen funcionando los destinos manuales y nombres habituales.
+La aplicación lo consulta mediante `DBYSON_DOCKER_DISCOVERY_URL=http://discovery:8090`. El componente debe permanecer en una red interna privada, sin publicar su puerto; corre con raíz para acceder al socket, sin capacidades adicionales, sin privilegios nuevos y con filesystem de solo lectura. El socket sigue siendo un recurso privilegiado: este componente es opcional y debe aislarse como en el ejemplo. Al deshabilitarlo, siguen funcionando los destinos manuales y nombres habituales.
 
 ## Validación
 

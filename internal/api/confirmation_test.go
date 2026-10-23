@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"github.com/adminbase/adminbase/internal/auth"
+	"github.com/gaboiv/dbyson/internal/auth"
 	"net/http/httptest"
 	"testing"
 	"time"
