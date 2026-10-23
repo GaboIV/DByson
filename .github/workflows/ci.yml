@@ -73,9 +73,47 @@ jobs:
         env:
           DBYSON_INTEGRATION_ADDR: 127.0.0.1:${{ job.services.database.ports['3306'] }}
 
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: docker compose -p dbyson-e2e -f compose.e2e.yml up -d --build --wait --wait-timeout 180
+      - name: Wait for app
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail http://127.0.0.1:18080/api/healthz; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - run: npm run test:e2e
+        working-directory: web
+      - name: Container logs
+        if: failure()
+        run: docker compose -p dbyson-e2e -f compose.e2e.yml logs --no-color
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-failure
+          path: |
+            web/playwright-report/
+            web/test-results/
+          retention-days: 7
+      - name: Stop disposable environment
+        if: always()
+        run: docker compose -p dbyson-e2e -f compose.e2e.yml down -v
+
   image:
     runs-on: ubuntu-latest
-    needs: [backend, frontend, mysql-integration]
+    needs: [backend, frontend, mysql-integration, e2e]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

@@ -1,0 +1,30 @@
+# Isolated fixtures: no development volumes, credentials or database ports.
+services:
+  database:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: e2e-root-only
+      MYSQL_DATABASE: dbyson_e2e
+      MYSQL_USER: e2e
+      MYSQL_PASSWORD: e2e-local-only
+    tmpfs:
+      - /var/lib/mysql
+    volumes:
+      - ./web/e2e/fixtures:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-pe2e-root-only"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:18080:8080"
+    environment:
+      DBYSON_MODE: personal
+      DBYSON_ALLOWED_HOSTS: database
+    tmpfs:
+      - /data:uid=65532,gid=65532,mode=0700
+    depends_on:
+      database:
+        condition: service_healthy

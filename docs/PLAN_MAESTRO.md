@@ -3,7 +3,7 @@
 > Un IDE web de bases de datos: **la sencillez de Adminer, la potencia de phpMyAdmin, una UX moderna y seguridad por defecto.**
 > Se distribuye como una sola imagen Docker que cualquier persona levanta con un comando.
 
-**Revisión:** 22 de octubre de 2026 · **Nombre:** DByson (antes AdminBase; ver [ADR 0006](adr/0006-renombrado-a-dbyson.md)) · **Licencia:** Apache-2.0
+**Revisión:** 23 de octubre de 2026 · **Nombre:** DByson (antes AdminBase; ver [ADR 0006](adr/0006-renombrado-a-dbyson.md)) · **Licencia:** Apache-2.0
 
 **Documentos relacionados:** [modelo de amenazas](threat-model.md) · [decisiones de arquitectura](adr/README.md) · detalle de lo implementado en [seguridad del MVP](MVP_SEGURIDAD.md), [experiencia de consulta](EXPERIENCIA_CONSULTA.md), [interfaz y preferencias](INTERFAZ_Y_PREFERENCIAS.md) y [SSH y espacios de trabajo](SSH_Y_ESPACIOS.md). La [evaluación del 21 de octubre](EVALUACION_2026-10-21.md) es histórica.
 
@@ -13,13 +13,13 @@
 
 DByson ya es una herramienta usable a diario para **una persona con MySQL/MariaDB**, local o remoto por SSH. Lo que falta para la meta se agrupa en tres bloques:
 
-1. **Publicar honestamente la v0.1.0:** el CI nunca se ha ejecutado en GitHub y faltan pruebas de extremo a extremo automatizadas.
+1. **Publicar honestamente la v0.1.0:** el CI ya pasó en `main`; falta integrar y validar el flujo E2E y completar el recorrido manual ([validación de v0.1.0](VALIDACION_V0.1.0.md)).
 2. **Productividad de un cliente maduro:** editor SQL con autocompletado, consultas guardadas, EXPLAIN, navegación por claves foráneas, importación.
 3. **Modo equipo:** hoy solo existe el administrador inicial; no hay gestión de usuarios, roles, conexiones compartidas ni SSO.
 
 | Fase | Estado | Resumen |
 |---|---|---|
-| 0 · Fundaciones | 🟡 Casi cerrada | Todo listo salvo la **primera ejecución del CI** en GitHub. |
+| 0 · Fundaciones | ✅ Cerrada | CI correcto en `main` tras integrar las ramas. |
 | 1 · MVP MySQL | 🟡 Funcional, sin release | Funciones completas y probadas a mano y con integración local. Falta cerrar criterios de salida y publicar v0.1.0. |
 | 2 · Conectividad segura | 🟡 Mayoría hecha | SSH, 2FA y auditoría listos. Faltan mTLS, panel de sesiones, validar certificados de cliente MySQL y cancelar consultas desde la interfaz. |
 | 3 · Productividad | 🟡 Iniciada | Pestañas, paleta y archivos `.sql` listos. El resto pendiente. |
@@ -50,7 +50,7 @@ DByson ya es una herramienta usable a diario para **una persona con MySQL/MariaD
 | Backend | Go | **Go 1.26**, binario estático | ✅ Se mantiene ([ADR 0001](adr/0001-binario-go-con-frontend-embebido.md)). |
 | Frontend | React + TS + Vite | **React 19 + TypeScript + Vite**, formato con Prettier | ✅ |
 | Estilos | Tailwind + shadcn/ui | CSS propio con *tokens* y 5 temas | Se mantiene: cumple y no añade dependencias. |
-| Editor SQL | CodeMirror 6 | `<textarea>` | ⬜ **Adoptar CodeMirror 6** en la Fase 3 (autocompletado, resaltado). |
+| Editor SQL | CodeMirror 6 | CodeMirror 6 | ✅ Resaltado y autocompletado; pendiente de validación funcional completa. |
 | Grilla | TanStack Table con virtualización | Tabla HTML paginada (≤500 filas) | Suficiente con paginación; virtualizar solo si se suben los límites. |
 | Datos en el cliente | TanStack Query | Caché propia de metadatos ([ADR 0005](adr/0005-cache-de-metadatos-en-el-frontend.md)) | Se mantiene mientras sea pequeña; revisar si crece. |
 | Persistencia | SQLite embebido | `modernc.org/sqlite` con migraciones versionadas | ✅ |
@@ -142,12 +142,12 @@ El estado detallado, con lo implementado, lo parcial y los riesgos aceptados, es
 
 Estimaciones para una persona a tiempo parcial (~15 h/semana).
 
-### Fase 0 — Fundaciones · 🟡 casi cerrada
+### Fase 0 — Fundaciones · ✅ cerrada
 - [x] Licencia Apache-2.0, ADRs, modelo de amenazas, Prettier.
 - [x] Go + React embebido; imagen distroless no-root; amd64 + arm64.
 - [x] CI: vet, tests con `-race`, `govulncheck`, formato, `npm audit`, integración MySQL 8.4 / MariaDB 11.4, build multi-arquitectura, Trivy. Release firmado.
 - [x] Nombre unificado DByson ([ADR 0006](adr/0006-renombrado-a-dbyson.md)).
-- [ ] **Primera ejecución del CI en GitHub y corregir lo que falle.**
+- [x] **Primera ejecución del CI en GitHub y corregir lo que falle.** CI correcto en `main` (`bb400e4`, ejecución 39907508409, segundo intento).
 
 ### Fase 1 — MVP MySQL · 🟡 funcional, pendiente de release
 - [x] Setup y login, vault, perfiles de conexión con TLS.
