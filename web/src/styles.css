@@ -1283,21 +1283,117 @@ td:hover .cell-copy,
   flex-direction: column;
   gap: 0.4rem;
 }
-.sql-editor {
-  width: 100%;
-  font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
-  font-size: 0.875rem;
-  padding: 0.65rem;
+.sql-cm-wrapper {
   border-radius: 6px;
+  overflow: hidden;
+}
+.sql-cm-wrapper .cm-editor {
+  position: relative !important;
+  box-sizing: border-box;
+  display: flex !important;
+  flex-direction: column;
+  height: 155px;
+  font-size: 0.875rem;
+  font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
   background: var(--surface);
-  line-height: 1.4;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-align: left;
+}
+.sql-cm-wrapper .cm-editor.cm-focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+.sql-cm-wrapper .cm-editor .cm-scroller {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  font-family: inherit;
+  line-height: 1.5;
+  height: 100%;
+  overflow: auto;
+  position: relative;
+  z-index: 0;
+  width: 100%;
+}
+.sql-cm-wrapper .cm-editor .cm-gutters {
+  flex: none;
+  display: flex !important;
+  flex-direction: column;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--muted);
+  border-right: 1px solid var(--border);
+  border-top-left-radius: 5px;
+  border-bottom-left-radius: 5px;
+  user-select: none;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+.sql-cm-wrapper .cm-editor .cm-gutter {
+  display: flex !important;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.sql-cm-wrapper .cm-editor .cm-gutterElement {
+  padding: 0 8px 0 6px;
+  min-width: 20px;
+  text-align: right;
+  white-space: nowrap;
+}
+.sql-cm-wrapper .cm-editor .cm-activeLineGutter {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.sql-cm-wrapper .cm-editor .cm-content {
+  margin: 0;
+  flex: 1;
+  display: block;
+  white-space: pre;
+  word-wrap: normal;
+  box-sizing: border-box;
+  padding: 0.5rem 0;
+  min-height: 100%;
+  caret-color: var(--accent);
+  outline: none;
+}
+.sql-cm-wrapper .cm-editor .cm-line {
+  display: block;
+  padding: 0 0.75rem;
+  line-height: 1.5;
+}
+.sql-cm-wrapper .cm-editor .cm-activeLine {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.sql-cm-wrapper .cm-editor .cm-cursor {
+  border-left: 2px solid var(--accent);
+  margin-left: -1px;
+}
+.sql-cm-wrapper .cm-editor .cm-selectionBackground {
+  background: color-mix(in srgb, var(--accent) 25%, transparent) !important;
+}
+.sql-cm-wrapper .cm-editor.cm-focused .cm-selectionBackground {
+  background: color-mix(in srgb, var(--accent) 30%, transparent) !important;
 }
 .sql-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.5rem;
+}
+.sql-info-hint {
+  font-size: 0.74rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 .sql-snippets {
   display: flex;
@@ -1315,6 +1411,115 @@ td:hover .cell-copy,
   font-size: 0.825rem;
   color: var(--ok);
   margin-bottom: 0.4rem;
+}
+.sql-results-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.sql-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  min-height: 2.2rem;
+}
+.sql-results-tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  flex: 1;
+  min-width: 0;
+}
+.sql-results-actions {
+  flex: none;
+}
+.sql-result-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.sql-result-tab:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.sql-result-tab.selected {
+  background: var(--surface);
+  color: var(--accent);
+  border-top: 2px solid var(--accent);
+  font-weight: 500;
+}
+.sql-result-tab.error {
+  border-top-color: var(--danger);
+  color: var(--danger);
+}
+.sql-result-tab-title {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sql-result-tab-count {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--muted);
+}
+.sql-result-tab.selected .sql-result-tab-count {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+.sql-result-tab.error .sql-result-tab-count {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}
+.tab-status-icon {
+  font-size: 0.75rem;
+  font-weight: bold;
+}
+.tab-status-icon.success {
+  color: var(--ok);
+}
+.tab-status-icon.error {
+  color: var(--danger);
+}
+.sql-result-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.sql-statement-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.65rem;
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+.sql-statement-banner code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 80%;
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
 }
 .sql-history {
   background: var(--surface);
@@ -1518,6 +1723,9 @@ td:hover .cell-copy,
   border-radius: 6px 6px 0 0;
   background: var(--bg);
 }
+.main-tab-strip .tab-item {
+  min-height: 2.5rem;
+}
 .tab-item.selected {
   background: var(--surface);
   border-top-color: var(--accent);
@@ -1530,16 +1738,40 @@ td:hover .cell-copy,
 .tab-item [role="tab"] {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.45rem;
   min-width: 0;
-  padding: 0.45rem 0.7rem;
+  padding: 0.35rem 0.65rem;
   color: var(--muted);
   white-space: nowrap;
 }
 .tab-item.selected [role="tab"] {
   color: var(--accent);
 }
+.tab-item-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  line-height: 1.15;
+}
+.tab-item-subtitle {
+  font-size: 0.65rem;
+  line-height: 1.1;
+  color: var(--muted);
+  opacity: 0.75;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  user-select: none;
+}
+.tab-item.selected .tab-item-subtitle {
+  color: var(--muted);
+  opacity: 0.85;
+}
 .tab-item-label {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1569,6 +1801,29 @@ td:hover .cell-copy,
   border-bottom: 0;
   border-radius: 6px 6px 0 0;
   background: transparent;
+}
+.tab-strip-inline-actions {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+}
+.tab-strip-inline-actions .tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.15rem;
+  padding: 0 0.55rem;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+}
+.tab-strip-inline-actions .tab-add:hover {
+  background: var(--surface-hover);
+  color: var(--accent);
 }
 .table-tab-strip {
   flex: 1;

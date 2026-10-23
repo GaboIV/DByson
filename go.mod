@@ -2,6 +2,9 @@ module github.com/gaboiv/dbyson
 
 go 1.26.0
 
+// Minimum toolchain with the fix for GO-2026-6809 (crypto/x509).
+toolchain go1.26.10
+
 require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/kayrus/putty v1.0.5

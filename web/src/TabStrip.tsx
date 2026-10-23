@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 export interface TabItem {
   id: string;
   label: string;
+  subtitle?: string;
   title?: string;
   control?: string;
   leading?: ReactNode;
@@ -17,6 +18,7 @@ export function TabStrip({
   idPrefix = "tab",
   className = "",
   actions,
+  inlineActions,
 }: {
   label: string;
   items: TabItem[];
@@ -24,6 +26,7 @@ export function TabStrip({
   idPrefix?: string;
   className?: string;
   actions?: ReactNode;
+  inlineActions?: ReactNode;
 }) {
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -76,7 +79,7 @@ export function TabStrip({
             <button
               id={`${idPrefix}-${item.id}`}
               role="tab"
-              aria-label={item.label}
+              aria-label={item.subtitle ? `${item.subtitle} · ${item.label}` : item.label}
               aria-description={item.dirty ? "Cambios sin guardar" : undefined}
               aria-selected={active === item.id}
               aria-controls={item.control}
@@ -92,7 +95,10 @@ export function TabStrip({
               }}
             >
               {item.leading}
-              <span className="tab-item-label">{item.label}</span>
+              <span className="tab-item-content">
+                {item.subtitle && <span className="tab-item-subtitle">{item.subtitle}</span>}
+                <span className="tab-item-label">{item.label}</span>
+              </span>
               {item.dirty && (
                 <span className="tab-dirty" aria-label="Cambios sin guardar">
                   •
@@ -111,6 +117,7 @@ export function TabStrip({
             )}
           </div>
         ))}
+        {inlineActions && <div className="tab-strip-inline-actions">{inlineActions}</div>}
       </div>
       {actions && <div className="tab-strip-actions">{actions}</div>}
     </div>

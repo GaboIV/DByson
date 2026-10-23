@@ -304,7 +304,7 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
         idPrefix={`view-${pane.id}`}
         active={fixed.includes(pane.view) ? pane.view : pane.id}
         items={items}
-        actions={
+        inlineActions={
           <ActionMenu
             label={`Nueva consulta en ${pane.groupTable}`}
             title="Nueva consulta · Ctrl+Alt+N"
@@ -336,6 +336,7 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
       return {
         id: g.groupId,
         label: g.groupTable || (standaloneQuery ? g.customTitle || g.title : g.title),
+        subtitle: c?.name,
         title: `${c?.name || "Conexión"} · ${g.groupDatabase}${g.groupTable ? " · " + g.groupTable : ""}`,
         leading: <span className={`tab-env env-${c?.env || "local"}`} />,
         control: `panel-${child.id}`,
