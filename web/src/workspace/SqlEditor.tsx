@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { EditorView, basicSetup } from "codemirror";
 import { sql, MySQL } from "@codemirror/lang-sql";
 import { autocompletion } from "@codemirror/autocomplete";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Prec } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
@@ -163,7 +163,8 @@ export function SqlEditor({ value, onChange, onSelectionChange, onRun, tables, g
       doc: value,
       extensions: [
         basicSetup,
-        runKeymap,
+        // Override basicSetup's Mod-Enter (insertBlankLine).
+        Prec.highest(runKeymap),
         dbysonEditorTheme,
         syntaxHighlighting(dbysonHighlightStyle),
         sql({ dialect: MySQL }),
