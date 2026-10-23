@@ -1,5 +1,7 @@
 # DByson
 
+<img src="logo-dbyson.png" alt="Logo de DByson: una base de datos rodeada por una esfera" width="160" />
+
 IDE web de bases de datos: la sencillez de Adminer, la potencia de phpMyAdmin, UX moderna y seguridad por defecto.
 Plan completo en [docs/PLAN_MAESTRO.md](docs/PLAN_MAESTRO.md). Evaluación del avance y prioridades en [docs/EVALUACION_2026-10-21.md](docs/EVALUACION_2026-10-21.md).
 
