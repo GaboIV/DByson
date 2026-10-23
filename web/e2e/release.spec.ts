@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { acceptanceTests } from "./acceptance";
 
 test("setup → conexión → tabla → editar → insertar → modificar → SQL → exportar", async ({ page }, testInfo) => {
   await page.goto("/");
@@ -76,3 +77,5 @@ test("setup → conexión → tabla → editar → insertar → modificar → SQ
     if (format === "sql") expect(content).toMatch(/CREATE TABLE/i);
   }
 });
+
+acceptanceTests();

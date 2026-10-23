@@ -27,6 +27,7 @@ export function InsertRecord({ ctx, schema, onClose, onDirtyChange }: Props) {
     e.preventDefault();
     if (!schema) return;
     setError("");
+    setNotice("");
     try {
       const r = await api<{ executedSql: string }>("POST", `${tablePath(ctx)}/rows`, { values: writableValues(schema, current) });
       ctx.reportSql(r.executedSql);
