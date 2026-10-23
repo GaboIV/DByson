@@ -118,15 +118,7 @@ const dbysonEditorTheme = EditorView.theme({
   },
 });
 
-export function SqlEditor({
-  value,
-  onChange,
-  onSelectionChange,
-  onRun,
-  tables,
-  getColumns,
-  defaultTable,
-}: SqlEditorProps) {
+export function SqlEditor({ value, onChange, onSelectionChange, onRun, tables, getColumns, defaultTable }: SqlEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
 

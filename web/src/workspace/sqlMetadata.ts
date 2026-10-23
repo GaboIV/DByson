@@ -6,18 +6,67 @@ export interface SqlTableInfo {
 }
 
 const COMMON_SQL_KEYWORDS = [
-  "SELECT", "FROM", "WHERE", "JOIN", "LEFT JOIN", "INNER JOIN", "RIGHT JOIN",
-  "CROSS JOIN", "ON", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET",
-  "INSERT INTO", "VALUES", "UPDATE", "SET", "DELETE FROM", "EXPLAIN", "SHOW TABLES",
-  "AND", "OR", "NOT", "IN", "LIKE", "IS NULL", "IS NOT NULL", "BETWEEN",
-  "AS", "ASC", "DESC", "DISTINCT", "CASE", "WHEN", "THEN", "ELSE", "END",
-  "UNION", "UNION ALL"
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "JOIN",
+  "LEFT JOIN",
+  "INNER JOIN",
+  "RIGHT JOIN",
+  "CROSS JOIN",
+  "ON",
+  "GROUP BY",
+  "ORDER BY",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "INSERT INTO",
+  "VALUES",
+  "UPDATE",
+  "SET",
+  "DELETE FROM",
+  "EXPLAIN",
+  "SHOW TABLES",
+  "AND",
+  "OR",
+  "NOT",
+  "IN",
+  "LIKE",
+  "IS NULL",
+  "IS NOT NULL",
+  "BETWEEN",
+  "AS",
+  "ASC",
+  "DESC",
+  "DISTINCT",
+  "CASE",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  "UNION",
+  "UNION ALL",
 ];
 
 const COMMON_SQL_FUNCTIONS = [
-  "COUNT(*)", "COUNT()", "SUM()", "AVG()", "MIN()", "MAX()",
-  "NOW()", "CURDATE()", "CONCAT()", "COALESCE()", "IFNULL()",
-  "DATE()", "DATEDIFF()", "LOWER()", "UPPER()", "TRIM()", "LENGTH()", "ROUND()"
+  "COUNT(*)",
+  "COUNT()",
+  "SUM()",
+  "AVG()",
+  "MIN()",
+  "MAX()",
+  "NOW()",
+  "CURDATE()",
+  "CONCAT()",
+  "COALESCE()",
+  "IFNULL()",
+  "DATE()",
+  "DATEDIFF()",
+  "LOWER()",
+  "UPPER()",
+  "TRIM()",
+  "LENGTH()",
+  "ROUND()",
 ];
 
 /**
@@ -38,9 +87,28 @@ export function extractTablesAndAliases(sql: string): {
   let match: RegExpExecArray | null;
 
   const stopWords = new Set([
-    "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "ON",
-    "GROUP", "ORDER", "LIMIT", "HAVING", "SET", "VALUES", "SELECT", "UNION",
-    "AND", "OR", "NOT", "IN", "AS", "BY"
+    "WHERE",
+    "JOIN",
+    "LEFT",
+    "RIGHT",
+    "INNER",
+    "OUTER",
+    "CROSS",
+    "ON",
+    "GROUP",
+    "ORDER",
+    "LIMIT",
+    "HAVING",
+    "SET",
+    "VALUES",
+    "SELECT",
+    "UNION",
+    "AND",
+    "OR",
+    "NOT",
+    "IN",
+    "AS",
+    "BY",
   ]);
 
   while ((match = regex.exec(clean)) !== null) {
@@ -111,9 +179,23 @@ export function determineSqlContext(textBeforeCursor: string): {
   // Column-expecting positions
   if (
     [
-      "SELECT", "WHERE", "ON", "AND", "OR", "HAVING", "BY", "SET",
-      "CASE", "WHEN", "THEN", "ELSE", "LIKE", "IN", "BETWEEN",
-      "DISTINCT", "ALL"
+      "SELECT",
+      "WHERE",
+      "ON",
+      "AND",
+      "OR",
+      "HAVING",
+      "BY",
+      "SET",
+      "CASE",
+      "WHEN",
+      "THEN",
+      "ELSE",
+      "LIKE",
+      "IN",
+      "BETWEEN",
+      "DISTINCT",
+      "ALL",
     ].includes(lastKeyword)
   ) {
     return { type: "column", prefix, wordFrom };

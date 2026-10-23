@@ -79,7 +79,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
     for (const t of missing) {
       api<TableSchema>(
         "GET",
-        `/api/connections/${ctx.connection.id}/databases/${encodeURIComponent(ctx.database)}/tables/${encodeURIComponent(t)}/schema`
+        `/api/connections/${ctx.connection.id}/databases/${encodeURIComponent(ctx.database)}/tables/${encodeURIComponent(t)}/schema`,
       )
         .then((res) => {
           if (!active || !res?.columns) return;
@@ -106,7 +106,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
       if (columnsCache[t.name.toLowerCase()]) continue;
       api<TableSchema>(
         "GET",
-        `/api/connections/${ctx.connection.id}/databases/${encodeURIComponent(ctx.database)}/tables/${encodeURIComponent(t.name)}/schema`
+        `/api/connections/${ctx.connection.id}/databases/${encodeURIComponent(ctx.database)}/tables/${encodeURIComponent(t.name)}/schema`,
       )
         .then((res) => {
           if (!res?.columns) return;
@@ -126,7 +126,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
       const lower = tableName.toLowerCase();
       return columnsCache[lower] || columnsCache[tableName] || [];
     },
-    [columnsCache]
+    [columnsCache],
   );
 
   const tablesList = useMemo(() => {
@@ -163,9 +163,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
     for (let i = 0; i < stmts.length; i++) {
       const stmt = stmts[i];
       // Mark current as running
-      setExecutions((prev) =>
-        prev.map((item, idx) => (idx === i ? { ...item, status: "running" } : item))
-      );
+      setExecutions((prev) => prev.map((item, idx) => (idx === i ? { ...item, status: "running" } : item)));
 
       try {
         const r = await ctx.confirmedApi<QueryResponse>("POST", `/api/connections/${ctx.connection.id}/query`, {
@@ -176,26 +174,16 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
         if (!r) {
           // User cancelled confirmation
           setExecutions((prev) =>
-            prev.map((item, idx) =>
-              idx === i ? { ...item, status: "error", error: "Ejecución cancelada por el usuario" } : item
-            )
+            prev.map((item, idx) => (idx === i ? { ...item, status: "error", error: "Ejecución cancelada por el usuario" } : item)),
           );
           break;
         }
 
         if (!r.ok) {
           const errMsg = r.error || "Error ejecutando la consulta";
-          setExecutions((prev) =>
-            prev.map((item, idx) =>
-              idx === i ? { ...item, status: "error", error: errMsg } : item
-            )
-          );
+          setExecutions((prev) => prev.map((item, idx) => (idx === i ? { ...item, status: "error", error: errMsg } : item)));
         } else {
-          setExecutions((prev) =>
-            prev.map((item, idx) =>
-              idx === i ? { ...item, status: "success", result: r.result ?? null } : item
-            )
-          );
+          setExecutions((prev) => prev.map((item, idx) => (idx === i ? { ...item, status: "success", result: r.result ?? null } : item)));
           if (r.result) {
             ctx.reportSql(r.result.executedSql || stmt, r.result.executionMs);
             if (!r.result.isSelect) invalidateConnection(ctx.connection.id);
@@ -203,11 +191,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
         }
       } catch (e) {
         const errMsg = errorText(e, "Error de red o del servidor");
-        setExecutions((prev) =>
-          prev.map((item, idx) =>
-            idx === i ? { ...item, status: "error", error: errMsg } : item
-          )
-        );
+        setExecutions((prev) => prev.map((item, idx) => (idx === i ? { ...item, status: "error", error: errMsg } : item)));
       }
     }
 
@@ -306,9 +290,13 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
           </div>
           <span className="sql-info-hint" title="Autocompletado predictivo activo. Selecciona sentencias o ejecuta todo con Ctrl+Enter.">
             {hasSelection ? (
-              <>⚡ <strong>Selección activa</strong> · Ctrl+Enter</>
+              <>
+                ⚡ <strong>Selección activa</strong> · Ctrl+Enter
+              </>
             ) : (
-              <>Selecciona para ejecutar o pulsa <strong>Ctrl+Enter</strong></>
+              <>
+                Selecciona para ejecutar o pulsa <strong>Ctrl+Enter</strong>
+              </>
             )}
           </span>
           <button
@@ -317,13 +305,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
             onClick={() => void run()}
             title={hasSelection ? "Ejecutar la selección de SQL (Ctrl+Enter)" : "Ejecutar todo el script SQL (Ctrl+Enter)"}
           >
-            {running ? (
-              <Spinner label="Ejecutando…" />
-            ) : hasSelection ? (
-              "▶ Ejecutar selección"
-            ) : (
-              "▶ Ejecutar todo"
-            )}
+            {running ? <Spinner label="Ejecutando…" /> : hasSelection ? "▶ Ejecutar selección" : "▶ Ejecutar todo"}
           </button>
         </div>
       </div>
@@ -347,21 +329,13 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
                   {item.status === "error" && <span className="tab-status-icon error">✕</span>}
                   {item.status === "success" && <span className="tab-status-icon success">✓</span>}
                   <span className="sql-result-tab-title">{item.title}</span>
-                  {item.result && item.result.isSelect && (
-                    <span className="sql-result-tab-count">{item.result.rows.length} filas</span>
-                  )}
-                  {item.result && !item.result.isSelect && (
-                    <span className="sql-result-tab-count">{item.result.affectedRows} af.</span>
-                  )}
+                  {item.result && item.result.isSelect && <span className="sql-result-tab-count">{item.result.rows.length} filas</span>}
+                  {item.result && !item.result.isSelect && <span className="sql-result-tab-count">{item.result.affectedRows} af.</span>}
                 </button>
               ))}
             </div>
             <div className="sql-results-actions">
-              <button
-                className="btn-link"
-                onClick={() => setExecutions([])}
-                title="Limpiar pestañas de resultados"
-              >
+              <button className="btn-link" onClick={() => setExecutions([])} title="Limpiar pestañas de resultados">
                 Limpiar resultados
               </button>
             </div>
@@ -380,9 +354,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
                 </button>
               </div>
 
-              {currentExecution.error && (
-                <div className="alert alert-error">{currentExecution.error}</div>
-              )}
+              {currentExecution.error && <div className="alert alert-error">{currentExecution.error}</div>}
 
               {currentExecution.result && (
                 <div className="sql-result-section">
@@ -436,10 +408,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
                                     {
                                       label: "Copiar fila como JSON",
                                       onClick: () =>
-                                        void ctx.copy(
-                                          rowJSON(currentExecution.result!.columns, row),
-                                          "Fila copiada como JSON"
-                                        ),
+                                        void ctx.copy(rowJSON(currentExecution.result!.columns, row), "Fila copiada como JSON"),
                                     },
                                   ]}
                                 />
