@@ -18,7 +18,9 @@ jobs:
       id-token: write # keyless signing with cosign (Sigstore)
       attestations: write
     env:
-      IMAGE: ghcr.io/${{ github.repository_owner }}/dbyson
+      # OCI image references must be lowercase. The repository is displayed as
+      # DByson on GitHub, while its GHCR namespace is gaboiv.
+      IMAGE: ghcr.io/gaboiv/dbyson
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
