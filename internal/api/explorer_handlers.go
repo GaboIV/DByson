@@ -601,6 +601,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 }
 
 type queryRequest struct {
+	RequestID          string `json:"requestId"`
 	Query              string `json:"query"`
 	Database           string `json:"database"`
 	ConfirmDestructive bool   `json:"confirmDestructive"`
@@ -624,6 +625,27 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := policy.ValidateSQL(req.Query); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.RequestID == "" {
+		req.RequestID = newID()
+	}
+	if !queryIDPattern.MatchString(req.RequestID) {
+		writeError(w, 400, "invalid query identifier")
+		return
+	}
+	sess := sessionFrom(r)
+	active := &activeQuery{userID: sess.UserID, sessionID: sess.ID, connectionID: r.PathValue("id"), cancel: cancel}
+	if err := s.queries.add(req.RequestID, active); err != nil {
+		writeError(w, 429, err.Error())
+		return
+	}
+	defer s.queries.remove(req.RequestID)
+	cookie, _ := r.Cookie(cookieName)
+	// Close the gap between authentication and admission: revocation either
+	// sees this registered query or this lookup sees the deleted session.
+	if _, err := s.sessions.Lookup(ctx, cookie.Value); err != nil {
+		writeError(w, 401, "authentication required")
 		return
 	}
 
@@ -653,11 +675,24 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := mysql.ExecuteSQL(ctx, db, req.Database, req.Query, 1000)
+	execution, err := mysql.NewExecution(ctx, db)
 	if err != nil {
+		writeError(w, 502, err.Error())
+		return
+	}
+	active.mu.Lock()
+	active.execution = execution
+	active.mu.Unlock()
+	result, err := execution.Run(req.Database, req.Query, 1000)
+	if err != nil {
+		cancelled := ctx.Err() != nil
+		active.mu.Lock()
+		cancelled = cancelled || active.cancelled
+		active.mu.Unlock()
 		ar.entry.Outcome = audit.OutcomeError
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":          false,
+			"cancelled":   cancelled,
 			"error":       err.Error(),
 			"executedSql": req.Query,
 		})

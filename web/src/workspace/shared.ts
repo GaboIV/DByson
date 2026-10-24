@@ -3,7 +3,12 @@ import type { Connection, QueryResult, TableSchema } from "../api";
 
 export type WorkspaceView = "browse" | "data" | "structure" | "modify" | "insert" | "sql" | "export";
 
-export type ConfirmedApi = <T>(method: string, path: string, body?: Record<string, unknown>) => Promise<T | undefined>;
+export type ConfirmedApi = <T>(
+  method: string,
+  path: string,
+  body?: Record<string, unknown>,
+  options?: { signal?: AbortSignal },
+) => Promise<T | undefined>;
 
 /** Everything a view needs from the workspace that hosts it. */
 export interface ViewContext {

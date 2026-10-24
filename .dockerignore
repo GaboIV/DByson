@@ -9,3 +9,7 @@ web/playwright-report
 web/test-results
 **/*.md
 .env
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx

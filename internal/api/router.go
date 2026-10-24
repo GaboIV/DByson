@@ -27,6 +27,7 @@ type Deps struct {
 }
 
 type Server struct {
+	queries       queryRegistry
 	confirmations sync.Map // short-lived, single-use challenges
 	mfaPending    mfaChallenges
 	Deps
@@ -67,6 +68,9 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	mux.Handle("POST /api/auth/logout", s.requireAuth(s.handleLogout))
 	mux.Handle("GET /api/auth/me", s.requireAuth(s.handleMe))
+	mux.Handle("GET /api/auth/sessions", s.requireAuth(s.listSessions))
+	mux.Handle("DELETE /api/auth/sessions/{sessionID}", s.requireAuth(s.revokeSession))
+	mux.Handle("POST /api/auth/sessions/revoke-others", s.requireAuth(s.revokeOtherSessions))
 	mux.HandleFunc("POST /api/auth/mfa/verify", s.handleMFAVerify)
 	mux.Handle("GET /api/auth/mfa", s.requireAuth(s.handleMFAStatus))
 	mux.Handle("POST /api/auth/mfa/setup", s.requireAuth(s.handleMFASetup))
@@ -108,6 +112,7 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/drop", s.requireAuth(s.handleDropTable))
 	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/optimize", s.requireAuth(s.handleOptimizeTable))
 	mux.Handle("POST /api/connections/{id}/query", s.requireAuth(s.handleQuery))
+	mux.Handle("POST /api/connections/{id}/queries/{queryID}/cancel", s.requireAuth(s.cancelQuery))
 	mux.Handle("GET /api/connections/{id}/export", s.requireAuth(s.handleExport))
 
 	// Unknown API routes must 404 as JSON, never fall through to the SPA.

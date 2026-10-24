@@ -12,6 +12,8 @@ web/dist/*
 .env
 *.pem
 *.key
+*.p12
+*.pfx
 /data/
 
 # OS / IDE

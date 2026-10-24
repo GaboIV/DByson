@@ -30,8 +30,14 @@ export function useConfirmedApi(context: string) {
     [],
   );
 
-  async function confirmedApi<T>(method: string, path: string, body: Record<string, unknown> = {}): Promise<T | undefined> {
-    const response = await api<T | Challenge>(method, path, body);
+  async function confirmedApi<T>(
+    method: string,
+    path: string,
+    body: Record<string, unknown> = {},
+    options: { signal?: AbortSignal } = {},
+  ): Promise<T | undefined> {
+    options.signal?.throwIfAborted();
+    const response = await api<T | Challenge>(method, path, body, options);
     if (!(response && typeof response === "object" && "needsConfirmation" in response && response.needsConfirmation)) {
       return response as T;
     }
@@ -40,11 +46,20 @@ export function useConfirmedApi(context: string) {
     const pending = response as Challenge;
     setName("");
     setChallenge(pending);
+    const abort = () => finish(false);
+    options.signal?.addEventListener("abort", abort, { once: true });
     const confirmed = await new Promise<boolean>((resolve) => {
       resolver.current = resolve;
+      if (options.signal?.aborted) finish(false);
     });
+    options.signal?.removeEventListener("abort", abort);
     if (!confirmed) return undefined;
-    return api<T>(method, path, { ...body, confirmationToken: pending.confirmationToken, confirmationName: pending.confirmationTarget });
+    return api<T>(
+      method,
+      path,
+      { ...body, confirmationToken: pending.confirmationToken, confirmationName: pending.confirmationTarget },
+      options,
+    );
   }
 
   const confirmationDialog = challenge && (

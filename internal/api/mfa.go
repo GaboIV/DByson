@@ -352,7 +352,9 @@ func (s *Server) handleMFAEnable(w http.ResponseWriter, r *http.Request) {
 	// This session just proved the factor; every other session predates it and is revoked.
 	if c, err := r.Cookie(cookieName); err == nil {
 		_ = s.sessions.SetMFA(r.Context(), c.Value)
-		_ = s.sessions.DeleteOthers(r.Context(), sess.UserID, c.Value)
+		if err := s.sessions.DeleteOthers(r.Context(), sess.UserID, c.Value); err == nil {
+			s.queries.revokeSessions(sess.UserID, func(id string) bool { return id != sess.ID })
+		}
 	}
 	s.recordFor(r, "auth.mfa.enable", "", "", audit.OutcomeOK)
 	writeJSON(w, http.StatusOK, map[string]any{"recoveryCodes": codes})
@@ -392,7 +394,9 @@ func (s *Server) handleMFADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if c, err := r.Cookie(cookieName); err == nil {
-		_ = s.sessions.DeleteOthers(r.Context(), sess.UserID, c.Value)
+		if err := s.sessions.DeleteOthers(r.Context(), sess.UserID, c.Value); err == nil {
+			s.queries.revokeSessions(sess.UserID, func(id string) bool { return id != sess.ID })
+		}
 	}
 	s.recordFor(r, "auth.mfa.disable", "", "", audit.OutcomeOK)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

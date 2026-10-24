@@ -97,6 +97,17 @@ BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 CREATE TRIGGER audit_log_no_delete BEFORE DELETE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 `,
+
+	// 3: public, non-authenticating session identifiers and sign-in metadata.
+	`
+ALTER TABLE sessions ADD COLUMN public_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN ip TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN user_agent TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN client_cert TEXT NOT NULL DEFAULT '';
+UPDATE sessions SET public_id = lower(hex(randomblob(24)));
+CREATE UNIQUE INDEX idx_sessions_public_id ON sessions(public_id);
+CREATE INDEX idx_sessions_user ON sessions(user_id);
+`,
 }
 
 func migrate(db *sql.DB) error {

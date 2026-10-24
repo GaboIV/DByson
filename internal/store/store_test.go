@@ -23,6 +23,36 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	}
 }
 
+func TestSessionMetadataMigrationPreservesSessions(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, FileName)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range migrations[:2] {
+		if _, err := db.Exec(migration); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`PRAGMA user_version=2; INSERT INTO users(username,password_hash,created_at) VALUES('existing','unused',0); INSERT INTO sessions(id_hash,user_id,csrf,created_at,last_seen,expires_at) VALUES('first-hash',1,'first-csrf',1,1,9999999999),('second-hash',1,'second-csrf',1,1,9999999999)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var count, unique int
+	if err := st.DB.QueryRow(`SELECT count(*),count(DISTINCT public_id) FROM sessions WHERE public_id <> ''`).Scan(&count, &unique); err != nil || count != 2 || unique != 2 {
+		t.Fatalf("migrated sessions: count=%d unique=%d err=%v", count, unique, err)
+	}
+	var csrf string
+	if err := st.DB.QueryRow(`SELECT csrf FROM sessions WHERE id_hash='first-hash'`).Scan(&csrf); err != nil || csrf != "first-csrf" {
+		t.Fatal("migration changed session authentication")
+	}
+}
+
 // An installation from before the rename (adminbase.db, still in WAL mode with pending pages)
 // must be adopted as dbyson.db without losing rows.
 func TestAdoptsLegacyFileName(t *testing.T) {

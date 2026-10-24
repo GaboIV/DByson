@@ -37,6 +37,8 @@ Por defecto el binario escucha solo en `127.0.0.1:8080` (`DBYSON_LISTEN` para ca
 | `DBYSON_SETUP_TOKEN` | — | Si se define, es obligatorio para crear el primer administrador. |
 | `DBYSON_MODE` | `personal` | `personal`: una persona en su propia máquina (2FA disponible pero no obligatoria). `team`: DByson accesible por red para varias personas (2FA obligatoria para `prod` y SSH). |
 | `DBYSON_REQUIRE_MFA` | según el modo | Fuerza la política: `off` (opcional), `sensitive` (conexiones `prod` y túneles SSH, incluida su exportación con credenciales) o `all` (todo salvo el inicio de sesión y la propia configuración de 2FA). Si se define, gana sobre el modo. |
+| `DBYSON_TLS_CERT_FILE` / `DBYSON_TLS_KEY_FILE` | — | Certificado de servidor y clave PEM para HTTPS nativo (TLS 1.3). Deben configurarse juntos. |
+| `DBYSON_TLS_CLIENT_CA_FILE` | — | CA PEM de clientes: exige certificado válido en todo el listener HTTPS, incluido el login. Requiere certificado y clave de servidor. |
 
 Generar una clave maestra: `openssl rand -base64 32`.
 
@@ -65,6 +67,12 @@ Vistas internas por tabla, cierre con la rueda, opciones, temas e inspector de r
 - **2FA (TOTP):** se activa en *Seguridad* con cualquier app de autenticación. Al activarla se entregan 10 códigos de recuperación de un solo uso y se cierran las demás sesiones. El secreto se guarda cifrado en el vault y cada código solo sirve una vez.
 - **Política:** en modo `personal` (por defecto) la 2FA es opcional: protege poco cuando DByson solo es accesible desde tu máquina. En modo `team` (`DBYSON_MODE=team`) las conexiones `prod` y las que usan túnel SSH solo se abren desde una sesión verificada con 2FA.
 - **Auditoría:** se registran inicios de sesión (también fallidos), cambios en conexiones, consultas SQL, cambios de datos y exportaciones. Las lecturas de tablas no se registran. Las filas no se pueden modificar ni borrar por SQL, y cada una lleva un HMAC encadenado con una clave derivada de la clave maestra: *Verificar integridad* detecta ediciones, borrados o reordenamientos en el archivo. Limitación conocida: truncar las últimas entradas no se detecta hasta que exista un anclaje externo del último hash.
+
+## Conectividad segura
+
+La consola SQL ofrece **Cancelar consulta** mediante `KILL QUERY` y detiene las sentencias pendientes del script. En **Seguridad → Sesiones activas** puedes cerrar un acceso concreto o todas las demás sesiones de tu cuenta. Las cancelaciones y revocaciones quedan auditadas.
+
+HTTPS/mTLS nativo, certificados de cliente MySQL y despliegue: [guía de Fase 2](docs/CONECTIVIDAD_SEGURA.md). mTLS complementa el login y la 2FA; las sesiones quedan vinculadas al certificado con el que se iniciaron.
 
 ## Documentación de diseño
 

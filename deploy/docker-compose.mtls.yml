@@ -1,0 +1,21 @@
+# Build this branch before deployment; v0.1.0 predates native HTTPS/mTLS.
+services:
+  app:
+    build: ..
+    ports:
+      - "127.0.0.1:8443:8080"
+    environment:
+      DBYSON_MODE: team
+      DBYSON_TLS_CERT_FILE: /tls/server.pem
+      DBYSON_TLS_KEY_FILE: /tls/server-key.pem
+      DBYSON_TLS_CLIENT_CA_FILE: /tls/client-ca.pem
+    volumes:
+      - dbyson-data:/data
+      - ${DBYSON_TLS_DIR:?Set DBYSON_TLS_DIR to an absolute certificate directory}:/tls:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+volumes:
+  dbyson-data:
+    external: true

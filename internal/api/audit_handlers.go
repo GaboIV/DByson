@@ -12,6 +12,9 @@ import (
 
 // actionNames gives stable, readable names to audited routes (keyed by ServeMux pattern).
 var actionNames = map[string]string{
+	"DELETE /api/auth/sessions/{sessionID}":                                 "auth.session.revoke",
+	"POST /api/auth/sessions/revoke-others":                                 "auth.sessions.revoke_others",
+	"POST /api/connections/{id}/queries/{queryID}/cancel":                   "query.cancel",
 	"POST /api/auth/logout":                                                 "auth.logout",
 	"POST /api/auth/mfa/setup":                                              "auth.mfa.setup",
 	"POST /api/auth/mfa/enable":                                             "auth.mfa.enable",

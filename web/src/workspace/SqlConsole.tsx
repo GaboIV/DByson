@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type QueryResponse, type QueryResult, type TableSchema } from "../api";
 import { ActionMenu } from "../ActionMenu";
 import { RecordDetail, type RecordSnapshot } from "../RecordDetail";
@@ -27,7 +27,7 @@ export interface StatementExecution {
   id: string;
   statement: string;
   title: string;
-  status: "pending" | "running" | "success" | "error";
+  status: "pending" | "running" | "success" | "error" | "cancelled";
   result: QueryResult | null;
   error?: string;
 }
@@ -40,6 +40,17 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
   const [executions, setExecutions] = useState<StatementExecution[]>([]);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [running, setRunning] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const active = useRef<{ controller: AbortController; requestId: string; stop: boolean } | null>(null);
+  useEffect(
+    () => () => {
+      if (active.current) {
+        active.current.stop = true;
+        active.current.controller.abort();
+      }
+    },
+    [],
+  );
   const [error, setError] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [detail, setDetail] = useState<RecordSnapshot | null>(null);
@@ -139,12 +150,14 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
   const hasSelection = selectedText.trim().length > 0;
 
   async function run() {
-    if (running) return;
+    if (active.current) return;
     const targetText = (hasSelection ? selectedText : sql).trim();
     if (!targetText) return;
 
     const stmts = splitSqlStatements(targetText);
     if (stmts.length === 0) return;
+    const batch = { controller: new AbortController(), requestId: "", stop: false };
+    active.current = batch;
 
     setRunning(true);
     setError("");
@@ -161,15 +174,23 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
     setActiveTabIndex(0);
 
     for (let i = 0; i < stmts.length; i++) {
+      if (batch.stop) break;
+      batch.requestId = crypto.randomUUID();
       const stmt = stmts[i];
       // Mark current as running
       setExecutions((prev) => prev.map((item, idx) => (idx === i ? { ...item, status: "running" } : item)));
 
       try {
-        const r = await ctx.confirmedApi<QueryResponse>("POST", `/api/connections/${ctx.connection.id}/query`, {
-          query: stmt,
-          database: ctx.database,
-        });
+        const r = await ctx.confirmedApi<QueryResponse>(
+          "POST",
+          `/api/connections/${ctx.connection.id}/query`,
+          {
+            query: stmt,
+            database: ctx.database,
+            requestId: batch.requestId,
+          },
+          { signal: batch.controller.signal },
+        );
 
         if (!r) {
           // User cancelled confirmation
@@ -180,8 +201,15 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
         }
 
         if (!r.ok) {
+          if (r.cancelled) batch.stop = true;
           const errMsg = r.error || "Error ejecutando la consulta";
-          setExecutions((prev) => prev.map((item, idx) => (idx === i ? { ...item, status: "error", error: errMsg } : item)));
+          setExecutions((prev) =>
+            prev.map((item, idx) =>
+              idx === i
+                ? { ...item, status: r.cancelled ? "cancelled" : "error", error: r.cancelled ? "Consulta cancelada" : errMsg }
+                : item,
+            ),
+          );
         } else {
           setExecutions((prev) => prev.map((item, idx) => (idx === i ? { ...item, status: "success", result: r.result ?? null } : item)));
           if (r.result) {
@@ -191,12 +219,49 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
         }
       } catch (e) {
         const errMsg = errorText(e, "Error de red o del servidor");
-        setExecutions((prev) => prev.map((item, idx) => (idx === i ? { ...item, status: "error", error: errMsg } : item)));
+        setExecutions((prev) =>
+          prev.map((item, idx) =>
+            idx === i
+              ? {
+                  ...item,
+                  status: batch.stop ? "cancelled" : "error",
+                  error: batch.stop ? "Se solicitó cancelar la consulta. Una operación ya completada no se revierte." : errMsg,
+                }
+              : item,
+          ),
+        );
       }
     }
 
+    setExecutions((prev) =>
+      prev.map((item) =>
+        item.status === "pending" ? { ...item, status: "cancelled", error: "Sentencia omitida: se detuvo el script." } : item,
+      ),
+    );
+    active.current = null;
+    setCancelling(false);
     setHistory((h) => [targetText, ...h.filter((q) => q !== targetText)].slice(0, 20));
     setRunning(false);
+  }
+
+  async function cancelQuery() {
+    const batch = active.current;
+    if (!batch || batch.stop) return;
+    batch.stop = true;
+    setCancelling(true);
+    try {
+      await api(
+        "POST",
+        `/api/connections/${ctx.connection.id}/queries/${batch.requestId}/cancel`,
+        {},
+        { signal: AbortSignal.timeout(6000) },
+      );
+    } catch (e) {
+      if (!(e instanceof Error && "status" in e && e.status === 404))
+        setError(errorText(e, "No se pudo confirmar la cancelación en MySQL"));
+    } finally {
+      batch.controller.abort();
+    }
   }
 
   function download() {
@@ -310,6 +375,13 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
         </div>
       </div>
 
+      {running && (
+        <div className="sql-cancel-bar">
+          <button className="danger" disabled={cancelling} onClick={() => void cancelQuery()}>
+            {cancelling ? "Cancelando…" : "Cancelar consulta"}
+          </button>
+        </div>
+      )}
       {error && <div className="alert alert-error">{error}</div>}
 
       {/* Result Tabs and Result Section */}
@@ -335,7 +407,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
               ))}
             </div>
             <div className="sql-results-actions">
-              <button className="btn-link" onClick={() => setExecutions([])} title="Limpiar pestañas de resultados">
+              <button className="btn-link" disabled={running} onClick={() => setExecutions([])} title="Limpiar pestañas de resultados">
                 Limpiar resultados
               </button>
             </div>

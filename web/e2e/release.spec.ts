@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { acceptanceTests } from "./acceptance";
 import { connectionUXTests } from "./connections";
+import { secureConnectivityTests } from "./security";
 
 test("setup → conexión → tabla → editar → insertar → modificar → SQL → exportar", async ({ page }, testInfo) => {
   await page.goto("/");
@@ -81,3 +82,4 @@ test("setup → conexión → tabla → editar → insertar → modificar → SQ
 
 acceptanceTests();
 connectionUXTests();
+secureConnectivityTests();

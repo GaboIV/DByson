@@ -16,6 +16,7 @@ import (
 	"github.com/gaboiv/dbyson/internal/config"
 	"github.com/gaboiv/dbyson/internal/policy"
 	"github.com/gaboiv/dbyson/internal/store"
+	"github.com/gaboiv/dbyson/internal/transport"
 	"github.com/gaboiv/dbyson/internal/vault"
 	"github.com/gaboiv/dbyson/web"
 )
@@ -35,6 +36,10 @@ func run(log *slog.Logger) error {
 	// Secure default: loopback only. Exposing it requires an explicit opt-in.
 	addr := config.GetOr("LISTEN", "127.0.0.1:8080")
 	dataDir := config.GetOr("DATA_DIR", "./data")
+	tlsConfig, err := transport.ServerTLS(config.Get("TLS_CERT_FILE"), config.Get("TLS_KEY_FILE"), config.Get("TLS_CLIENT_CA_FILE"))
+	if err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return err
@@ -72,7 +77,8 @@ func run(log *slog.Logger) error {
 	}
 
 	srv := &http.Server{
-		Addr: addr,
+		Addr:      addr,
+		TLSConfig: tlsConfig,
 		Handler: api.NewRouter(version, web.Assets(), api.Deps{
 			Store:      st,
 			Vault:      v,
@@ -91,8 +97,14 @@ func run(log *slog.Logger) error {
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("dbyson listening", "addr", addr, "version", version, "data", dataDir)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errc <- err
+		var serveErr error
+		if tlsConfig != nil {
+			serveErr = srv.ListenAndServeTLS("", "")
+		} else {
+			serveErr = srv.ListenAndServe()
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errc <- serveErr
 		}
 	}()
 

@@ -1,0 +1,69 @@
+# All certificates, credentials and MySQL data are disposable. No host ports.
+services:
+  certificates:
+    image: golang:1.26-alpine
+    working_dir: /src
+    volumes:
+      - .:/src:ro
+      - pki:/certs
+    command: go run scripts/test-pki.go /certs
+  database:
+    image: mysql:8.4
+    command:
+      [
+        "--ssl-ca=/certs/ca.pem",
+        "--ssl-cert=/certs/server.pem",
+        "--ssl-key=/certs/server-key.pem",
+      ]
+    environment:
+      MYSQL_ROOT_PASSWORD: dbyson-tests
+      MYSQL_ROOT_HOST: "%"
+    volumes:
+      - pki:/certs:ro
+    tmpfs:
+      - /var/lib/mysql
+    depends_on:
+      certificates:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-pdbyson-tests"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  app-mtls:
+    build: .
+    environment:
+      DBYSON_MODE: personal
+      DBYSON_ALLOWED_HOSTS: database
+      DBYSON_TLS_CERT_FILE: /certs/server.pem
+      DBYSON_TLS_KEY_FILE: /certs/server-key.pem
+      DBYSON_TLS_CLIENT_CA_FILE: /certs/ca.pem
+    volumes:
+      - pki:/certs:ro
+    tmpfs:
+      - /data:uid=65532,gid=65532,mode=0700
+    depends_on:
+      certificates:
+        condition: service_completed_successfully
+  tests:
+    image: golang:1.26
+    working_dir: /src
+    environment:
+      DBYSON_INTEGRATION_ADDR: database:3306
+      DBYSON_TEST_PKI_DIR: /certs
+      DBYSON_MTLS_TEST_URL: https://app-mtls:8080
+    volumes:
+      - .:/src:ro
+      - pki:/certs:ro
+      - gomod:/go/pkg/mod
+      - gobuild:/root/.cache/go-build
+    depends_on:
+      database:
+        condition: service_healthy
+      app-mtls:
+        condition: service_started
+    command: go test -race -count=1 ./...
+volumes:
+  pki:
+  gomod:
+  gobuild:

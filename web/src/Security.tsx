@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, type AuditEntry, type Connection, type MFAStatus } from "./api";
 import { Dialog } from "./Dialog";
 import { useClipboard } from "./clipboard";
+import { SessionsPanel } from "./Sessions";
 
 const errorText = (e: unknown) => (e instanceof ApiError ? e.message : "No se pudo completar la operación");
 
@@ -150,6 +151,7 @@ export function SecurityDialog({ username, onClose, onChanged }: SecurityProps) 
             </>
           )}
           {errorLine}
+          <SessionsPanel />
         </div>
       )}
 

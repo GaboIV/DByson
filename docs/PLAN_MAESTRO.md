@@ -13,15 +13,15 @@
 
 DByson ya es una herramienta usable a diario para **una persona con MySQL/MariaDB**, local o remoto por SSH. Lo que falta para la meta se agrupa en tres bloques:
 
-1. **Publicar honestamente la v0.1.0:** el CI ya pasó en `main`; falta integrar y validar el flujo E2E y completar el recorrido manual ([validación de v0.1.0](VALIDACION_V0.1.0.md)).
+1. **Integrar y desplegar la Fase 2:** la v0.1.0 está publicada y firmada. Las mejoras de conectividad segura están implementadas y validadas localmente; falta su integración y despliegue ([guía](CONECTIVIDAD_SEGURA.md)). La comprobación de marca está aplazada y no bloquea publicaciones.
 2. **Productividad de un cliente maduro:** editor SQL con autocompletado, consultas guardadas, EXPLAIN, navegación por claves foráneas, importación.
 3. **Modo equipo:** hoy solo existe el administrador inicial; no hay gestión de usuarios, roles, conexiones compartidas ni SSO.
 
 | Fase | Estado | Resumen |
 |---|---|---|
 | 0 · Fundaciones | ✅ Cerrada | CI correcto en `main` tras integrar las ramas. |
-| 1 · MVP MySQL | 🟡 Funcional, sin release | Funciones completas y probadas a mano y con integración local. Falta cerrar criterios de salida y publicar v0.1.0. |
-| 2 · Conectividad segura | 🟡 Mayoría hecha | SSH, 2FA y auditoría listos. Faltan mTLS, panel de sesiones, validar certificados de cliente MySQL y cancelar consultas desde la interfaz. |
+| 1 · MVP MySQL | ✅ v0.1.0 publicada | CI, aceptación, imagen multi-arquitectura firmada y escaneada. Marca aplazada sin bloquear releases. |
+| 2 · Conectividad segura | 🟢 Implementada; integración pendiente | Cancelación con KILL QUERY, sesiones revocables, certificados MySQL y mTLS nativo; pruebas locales y CI configurada. |
 | 3 · Productividad | 🟡 Iniciada | Pestañas, paleta y archivos `.sql` listos. El resto pendiente. |
 | 4 · Equipos | ⬜ Base preparada | Modo `team`, aislamiento por usuario y exportación de perfiles. Falta lo esencial: usuarios, roles, SSO. |
 | 5+ · Expansión | ⬜ Pendiente | Solo MySQL/MariaDB; el contrato de drivers aún no existe en el código. |
@@ -98,9 +98,9 @@ El estado detallado, con lo implementado, lo parcial y los riesgos aceptados, es
 
 | Área | Hecho | Pendiente |
 |---|---|---|
-| Acceso a DByson | Argon2id, límites por usuario e IP, sesiones con caducidad, TOTP con códigos de recuperación, política por modo | mTLS de acceso, passkeys, SSO OIDC, panel de sesiones activas |
-| Conexiones | TLS con 4 modos y CA propia, SSH con huella fijada y bastión, `LOAD DATA LOCAL` deshabilitado, lista blanca anti-SSRF | Validar en integración los certificados de cliente MySQL |
-| Errores humanos | Color por entorno, solo lectura en cada conexión física, confirmación escrita con desafío de un solo uso, límites de resultado | Botón para cancelar consultas en curso (`KILL QUERY`), edición en lote con vista previa transaccional |
+| Acceso a DByson | Argon2id, límites por usuario e IP, sesiones revocables, TOTP, política por modo y mTLS con cookie vinculada al certificado | Passkeys, SSO OIDC |
+| Conexiones | TLS con 4 modos, CA propia y certificados de cliente validados en integración; SSH con huella fijada y bastión; lista blanca anti-SSRF | Ampliar la matriz de versiones de motores |
+| Errores humanos | Entornos, solo lectura, confirmación escrita de un solo uso, límites de resultado y cancelación de SQL con KILL QUERY | Edición en lote con vista previa transaccional |
 | Datos en reposo | Vault con cifrado de sobre; clave maestra por variable, archivo o generada | Comando de rotación de la clave maestra; exigir clave externa en modo `team` |
 | Auditoría | Append-only con cadena HMAC verificable, visor en la interfaz, SQL con contraseñas ocultas | Exportación a syslog/SIEM, retención, anclaje externo del último hash |
 | Cadena de suministro | Distroless no-root, `govulncheck`, `npm audit`, Trivy, SBOM, procedencia y firma cosign en release | Primera ejecución real; Dependabot/Renovate; CodeQL |
@@ -149,32 +149,33 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 - [x] Nombre unificado DByson ([ADR 0006](adr/0006-renombrado-a-dbyson.md)).
 - [x] **Primera ejecución del CI en GitHub y corregir lo que falle.** CI correcto en `main` (`bb400e4`, ejecución 39907508409, segundo intento).
 
-### Fase 1 — MVP MySQL · 🟡 funcional, pendiente de release
+### Fase 1 — MVP MySQL · ✅ v0.1.0 publicada
 - [x] Setup y login, vault, perfiles de conexión con TLS.
 - [x] Explorador, grilla con filtros, orden, paginación y edición de filas.
 - [x] Consola SQL con límites, confirmaciones y solo lectura reforzado.
 - [x] Exportación en streaming.
-- [ ] **Criterios de salida de v0.1.0** (todos obligatorios):
+- [x] **Criterios técnicos de salida de v0.1.0**:
   - CI en verde en `main`.
   - Prueba E2E automatizada (Playwright) del flujo: setup → crear y probar conexión → abrir tabla → editar fila → consulta SQL → exportar.
-  - Recorrido manual de Modificar, Nuevo registro y Exportar tras la división de vistas.
+  - Recorrido de aceptación automatizado y revisión visual de Modificar, Nuevo registro y Exportar.
   - Imagen publicada y firmada; verificación de la firma documentada.
-  - Verificar disponibilidad del nombre (GitHub, GHCR, dominio, marca).
+  - GitHub, GHCR, dominio y logo comprobados. Marca aplazada por decisión del usuario; no bloquea releases.
 - **Entregable:** `v0.1.0`.
 
-### Fase 2 — Conectividad segura · 🟡 mayoría hecha
+### Fase 2 — Conectividad segura · 🟢 implementada, integración pendiente
 - [x] Túnel SSH (OpenSSH/PPK, agente, contraseña, bastión, huella fijada).
 - [x] 2FA TOTP con códigos de recuperación; modos `personal`/`team` ([ADR 0004](adr/0004-modos-personal-y-equipo.md)).
 - [x] Auditoría v1 ([ADR 0003](adr/0003-auditoria-append-only-encadenada.md)).
-- [ ] Cancelar una consulta en curso desde la interfaz (`KILL QUERY`).
-- [ ] Panel de sesiones activas con revocación.
-- [ ] Validar certificados de cliente MySQL en la matriz de integración.
-- [ ] mTLS para acceder a DByson + comando para emitir certificados de cliente.
+- [x] Cancelar una consulta en curso desde la interfaz (`KILL QUERY`), con aislamiento por sesión y detención del script.
+- [x] Panel de sesiones activas propias con revocación y cancelación de sus consultas.
+- [x] Certificados de cliente MySQL validados en integración real; job de seguridad añadido a CI.
+- [x] mTLS nativo para todo el listener, cookie vinculada al certificado y guía de emisión con OpenSSL ([ADR 0007](adr/0007-conectividad-segura.md)).
+- [ ] Integrar la rama, confirmar la CI remota y configurar los certificados reales del despliegue.
 - **Entregable:** `v0.2.0`, apto para producción remota en uso personal.
 
 ### Fase 3 — Productividad · 🟡 iniciada
 - [x] Pestañas agrupadas por tabla, paleta de comandos, consultas con nombre y archivos `.sql`.
-- [ ] Editor SQL con CodeMirror 6: resaltado, autocompletado por esquema, ejecutar selección.
+- [x] Editor SQL con CodeMirror 6: resaltado, autocompletado por esquema, ejecutar selección.
 - [ ] Consultas guardadas en el servidor (opt-in) y snippets.
 - [ ] Navegación por claves foráneas.
 - [ ] EXPLAIN visual.
@@ -213,9 +214,9 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 | Tipo | Hoy | Falta |
 |---|---|---|
 | Unitarias Go | Auth, TOTP (vectores RFC 6238), vault, auditoría, migraciones, política SQL y de hosts, API, túneles, configuración | — |
-| Integración | MySQL 8.4 y MariaDB 11.4 (local y en CI), SSH real con bastión | MySQL 8.0 y 9.x, MariaDB 10.11; certificados de cliente |
+| Integración | MySQL 8.4, MariaDB 11.4, SSH con bastión, certificados de cliente, KILL QUERY y acceso mTLS real | MySQL 8.0 y 9.x, MariaDB 10.11 |
 | Frontend | Tipado estricto y formato en CI | Pruebas unitarias (Vitest) de `catalog.ts` y `sqlFile.ts` |
-| Extremo a extremo | Recorridos manuales en navegador | **Playwright en CI** (criterio de v0.1.0) |
+| Extremo a extremo | Playwright en CI; 20 casos locales de aceptación, interfaz y seguridad | Ampliar cobertura junto a nuevas funciones |
 | Fuzzing | — | Clasificador SQL y lector de archivos `.dbyson` |
 | Rendimiento | — | Abrir una tabla de 1M filas < 1 s; exportar 1 GB con < 100 MB de RAM |
 
@@ -232,8 +233,8 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 | Diferencias entre versiones de MySQL/MariaDB | Ampliar la matriz de integración. |
 | Resultados enormes | Límites de filas y bytes, exportación en streaming. |
 | Frontend difícil de mantener | Vistas separadas, Prettier en CI; añadir pruebas unitarias del frontend. |
-| Nombre "DByson" ya en uso | Verificar GitHub, GHCR, dominio y marca antes de v0.1.0. |
-| El CI nunca se ejecutó | Es el primer paso del próximo hito. |
+| Nombre "DByson" ya en uso | GitHub/GHCR/dominio revisados. Marca aplazada sin bloquear releases. |
+| Cambios nuevos sin CI remota | Integrar por PR y confirmar los jobs, incluido secure-connectivity. |
 
 ---
 
@@ -268,9 +269,7 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 
 ## 13. Próximos pasos inmediatos
 
-1. **Push de la rama y primera ejecución del CI;** corregir lo que falle.
-2. **Integrar en `main`** las ramas `feat/2fa-auditoria`, `feat/workspace-fase0` y el renombrado.
-3. **Prueba E2E con Playwright** del flujo principal y recorrido manual de Modificar, Nuevo registro y Exportar.
-4. **Verificar el nombre** y publicar `v0.1.0` firmada.
-5. Fase 2 restante: cancelar consultas desde la interfaz y panel de sesiones.
-6. Fase 3: CodeMirror 6 con autocompletado y consultas guardadas.
+1. Integrar las mejoras de interfaz y la Fase 2, y confirmar su CI remota.
+2. Configurar los certificados reales para activar mTLS siguiendo la guía de despliegue.
+3. Publicar la siguiente versión cuando se apruebe la integración; no mover la etiqueta v0.1.0 existente.
+4. Fase 3: consultas guardadas, navegación por claves foráneas, EXPLAIN e importación. CodeMirror ya está implementado.

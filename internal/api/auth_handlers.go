@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"net"
 	"net/http"
 	"strconv"
@@ -32,7 +34,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 			return
 		}
 		sess, err := s.sessions.Lookup(r.Context(), c.Value)
-		if err != nil {
+		if err != nil || sess.ClientCert != clientCertificate(r) {
 			clearCookie(w, r)
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
@@ -76,6 +78,14 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 
 func isHTTPS(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func clientCertificate(r *http.Request) string {
+	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(r.TLS.PeerCertificates[0].Raw)
+	return hex.EncodeToString(sum[:])
 }
 
 func setCookie(w http.ResponseWriter, r *http.Request, token string) {
@@ -123,7 +133,7 @@ func (s *Server) sessionView(ctx context.Context, userID int64, username, role, 
 }
 
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int64, username, role string, mfa bool) {
-	token, csrf, err := s.sessions.Create(r.Context(), userID, mfa)
+	token, csrf, err := s.sessions.CreateWithDetails(r.Context(), userID, mfa, auth.SessionDetails{IP: clientIP(r), UserAgent: truncateRunes(r.UserAgent(), 512), ClientCert: clientCertificate(r)})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
@@ -299,6 +309,8 @@ func truncateRunes(s string, n int) string {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r)
+	s.queries.revokeSessions(sess.UserID, func(id string) bool { return id == sess.ID })
 	if c, err := r.Cookie(cookieName); err == nil {
 		_ = s.sessions.Delete(r.Context(), c.Value)
 	}

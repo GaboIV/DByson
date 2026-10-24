@@ -252,6 +252,7 @@ export interface QueryResult {
 }
 
 export interface QueryResponse {
+  cancelled?: boolean;
   ok: boolean;
   result?: QueryResult;
   error?: string;

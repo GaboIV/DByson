@@ -73,6 +73,19 @@ jobs:
         env:
           DBYSON_INTEGRATION_ADDR: 127.0.0.1:${{ job.services.database.ports['3306'] }}
 
+  secure-connectivity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p web/dist && touch web/dist/index.html
+      - name: Real MySQL client certificates, query cancellation and mTLS handshakes
+        run: |
+          docker compose -p dbyson-security-test -f compose.security-test.yml up -d --build --wait --wait-timeout 180 database app-mtls
+          docker compose -p dbyson-security-test -f compose.security-test.yml run --rm --no-deps tests
+      - name: Stop disposable environment
+        if: always()
+        run: docker compose -p dbyson-security-test -f compose.security-test.yml down -v
+
   e2e:
     runs-on: ubuntu-latest
     steps:
@@ -113,7 +126,7 @@ jobs:
 
   image:
     runs-on: ubuntu-latest
-    needs: [backend, frontend, mysql-integration, e2e]
+    needs: [backend, frontend, mysql-integration, secure-connectivity, e2e]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

@@ -2692,6 +2692,44 @@ td:hover .cell-copy,
 }
 
 /* Explicit themes override the system preference. */
+.session-panel {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+.session-panel h4 {
+  margin: 0;
+}
+.session-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.session-item {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+.session-agent {
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+.session-item > button {
+  justify-self: start;
+}
+.sql-cancel-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.4rem;
+}
+.sql-result-tab.cancelled {
+  color: var(--muted);
+}
 :root[data-theme="dark"],
 :root[data-theme="payaso"] {
   --bg: #0f1218;

@@ -569,6 +569,20 @@ func ExecuteSQL(ctx context.Context, db *sql.DB, database string, query string, 
 		return nil, err
 	}
 	defer conn.Close()
+	return executeSQLConn(ctx, conn, database, query, maxRows)
+}
+
+func executeSQLConn(ctx context.Context, conn *sql.Conn, database, query string, maxRows int) (*QueryResult, error) {
+	if err := policy.ValidateSQL(query); err != nil {
+		return nil, err
+	}
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return nil, errors.New("query is empty")
+	}
+	if maxRows <= 0 {
+		maxRows = 1000
+	}
 	if database != "" {
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("USE %s", EscapeIdent(database))); err != nil {
 			return nil, err
