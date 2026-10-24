@@ -9,6 +9,7 @@
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview",
     "test:e2e": "tsc -p tsconfig.e2e.json && playwright test",
+    "test:unit": "node --experimental-strip-types --test tests/*.test.mjs",
     "format": "prettier --write src",
     "format:check": "prettier --check src"
   },

@@ -6,6 +6,7 @@ import { ActionMenu } from "./ActionMenu";
 import { Brand } from "./Brand";
 import { Connections } from "./Connections";
 import { Dialog } from "./Dialog";
+import { useConfirm } from "./Confirm";
 import { PreferencesDialog, QueryHistoryDialog, usePreferences } from "./Preferences";
 import { AuditDialog, SecurityDialog } from "./Security";
 import { TabStrip, type TabItem } from "./TabStrip";
@@ -79,6 +80,7 @@ function restore(key: string): WorkTab[] {
 }
 
 export function Workbench({ session, onLogout }: { session: Session; onLogout: () => void }) {
+  const confirm = useConfirm();
   const { preferences } = usePreferences();
   const storageKey = `dbyson:${session.username}`;
   const [tabs, setTabs] = useState<WorkTab[]>(() => restore(storageKey + ":tabs"));
@@ -201,10 +203,10 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
     setTabs((old) => old.map((t) => (t.id === id ? { ...t, customTitle: value || undefined } : t)));
   }
 
-  function remove(ids: string[]) {
+  async function remove(ids: string[]) {
     if (
       tabs.some((t) => ids.includes(t.id) && t.dirty) &&
-      !window.confirm("Esta pestaña tiene cambios sin guardar. ¿Cerrarla y descartar los borradores?")
+      !(await confirm("Esta pestaña tiene cambios sin guardar. ¿Cerrarla y descartar los borradores?"))
     )
       return;
     setTabs(tabs.filter((t) => !ids.includes(t.id)));
@@ -217,13 +219,13 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
     }
   }
 
-  function closeGroup(groupId: string) {
+  async function closeGroup(groupId: string) {
     const children = tabs.filter((t) => t.groupId === groupId);
     const index = groups.findIndex((g) => g.groupId === groupId);
     const neighbor = groups[index - 1] || groups[index + 1];
     if (
       children.some((t) => t.dirty) &&
-      !window.confirm("Esta pestaña tiene cambios sin guardar. ¿Cerrarla y descartar los borradores de sus vistas?")
+      !(await confirm("Esta pestaña tiene cambios sin guardar. ¿Cerrarla y descartar los borradores de sus vistas?"))
     )
       return;
     const ids = children.map((t) => t.id);

@@ -3,6 +3,8 @@ import { api, type QueryResult, type TableSchema } from "./api";
 import { cellText, rowJSON, useClipboard, type DataRow } from "./clipboard";
 import { useId } from "react";
 import { ResultLimitNotice } from "./ResultLimitNotice";
+import { enc, type ViewContext } from "./workspace/shared";
+import { ident, literal, type ForeignKey } from "./workspace/productivity";
 
 export interface RecordSnapshot {
   title: string;
@@ -24,7 +26,7 @@ function formatted(value: DataRow[number]) {
   return cellText(value);
 }
 
-export function RecordDetail({ snapshot, onClose }: { snapshot: RecordSnapshot; onClose: () => void }) {
+export function RecordDetail({ snapshot, onClose, ctx }: { snapshot: RecordSnapshot; onClose: () => void; ctx?: ViewContext }) {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [loading, setLoading] = useState(!!snapshot.endpoint);
   const [error, setError] = useState("");
@@ -35,6 +37,20 @@ export function RecordDetail({ snapshot, onClose }: { snapshot: RecordSnapshot; 
   const titleId = useId();
   const { copy, copyNotice } = useClipboard();
   const panel = useRef<HTMLElement>(null);
+  const [relations, setRelations] = useState<ForeignKey[]>([]);
+  const [relationError, setRelationError] = useState("");
+  useEffect(() => {
+    if (!ctx?.database || !ctx.table) return;
+    const controller = new AbortController();
+    void api<ForeignKey[]>("GET", `/api/connections/${ctx.connection.id}/databases/${enc(ctx.database)}/relations`, undefined, {
+      signal: controller.signal,
+    })
+      .then((keys) => setRelations(keys.filter((k) => k.table === ctx.table)))
+      .catch((e) => {
+        if (!controller.signal.aborted) setRelationError(e instanceof Error ? e.message : "No se pudieron leer las relaciones");
+      });
+    return () => controller.abort();
+  }, [ctx?.connection.id, ctx?.database, ctx?.table]);
 
   useEffect(() => {
     const previous = document.activeElement;
@@ -113,7 +129,7 @@ export function RecordDetail({ snapshot, onClose }: { snapshot: RecordSnapshot; 
       >
         <header className="inspector-header">
           <div>
-            <p className="eyebrow">INSPECTOR DE REGISTRO</p>
+            <p className="eyebrow">DETALLE DEL REGISTRO</p>
             <h3 id={titleId}>{snapshot.title}</h3>
             <div className="record-identity">
               {snapshot.pk &&
@@ -148,6 +164,37 @@ export function RecordDetail({ snapshot, onClose }: { snapshot: RecordSnapshot; 
           </p>
         )}
         <ResultLimitNotice result={result} />
+        {relations.length > 0 && (
+          <nav className="record-relations" aria-label="Registros relacionados">
+            {relations.map((key) => {
+              const values = key.columns.map((c) => row[columns.indexOf(c)]);
+              const available = values.every((v) => v !== null && v !== undefined);
+              return (
+                <button
+                  key={key.name}
+                  disabled={!available}
+                  title={`${key.name}: ${key.columns.join(", ")} → ${key.referencedColumns.join(", ")}`}
+                  onClick={() => {
+                    const condition = key.referencedColumns.map((c, i) => `${ident(c)} = ${literal(cellText(values[i]))}`).join(" AND ");
+                    ctx?.newSQL(
+                      `SELECT * FROM ${ident(key.referencedDatabase)}.${ident(key.referencedTable)} WHERE ${condition} LIMIT 50;`,
+                      key.referencedDatabase,
+                    );
+                    onClose();
+                  }}
+                >
+                  ↗ {key.referencedTable}
+                  <small>{key.columns.join(" + ")}</small>
+                </button>
+              );
+            })}
+          </nav>
+        )}
+        {relationError && (
+          <p className="inspector-warning" role="alert">
+            Relaciones: {relationError}
+          </p>
+        )}
         {view === "record" ? (
           <>
             <div className="inspector-search">

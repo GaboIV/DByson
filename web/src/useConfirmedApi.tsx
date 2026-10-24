@@ -63,7 +63,7 @@ export function useConfirmedApi(context: string) {
   }
 
   const confirmationDialog = challenge && (
-    <div className="modal-overlay">
+    <div className="modal-overlay confirmation-overlay">
       <section
         className="modal-content"
         role="dialog"

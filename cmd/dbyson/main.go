@@ -75,11 +75,16 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	passkeys, err := api.NewPasskeys(config.Get("WEBAUTHN_RP_ID"), config.Get("WEBAUTHN_ORIGIN"))
+	if err != nil {
+		return err
+	}
 
 	srv := &http.Server{
 		Addr:      addr,
 		TLSConfig: tlsConfig,
 		Handler: api.NewRouter(version, web.Assets(), api.Deps{
+			WebAuthn:   passkeys,
 			Store:      st,
 			Vault:      v,
 			Policy:     pol,

@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, setCsrf, type LoginResponse, type Session } from "./api";
 import { Brand } from "./Brand";
+import { loginPasskey, passkeysSupported } from "./passkeys";
 
 interface Props {
   mode: "setup" | "login";
@@ -16,6 +17,15 @@ export function AuthScreen({ mode, needsToken, onSession }: Props) {
   const [busy, setBusy] = useState(false);
   const [mfaToken, setMfaToken] = useState("");
   const [code, setCode] = useState("");
+  const [passkeys, setPasskeys] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    if (mode === "login")
+      void api<{ enabled: boolean }>("GET", "/api/auth/passkeys/status", undefined, { signal: controller.signal })
+        .then((r) => setPasskeys(r.enabled))
+        .catch(() => {});
+    return () => controller.abort();
+  }, [mode]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -145,6 +155,33 @@ export function AuthScreen({ mode, needsToken, onSession }: Props) {
         <button className="primary" disabled={busy}>
           {mode === "setup" ? "Crear administrador" : "Entrar"}
         </button>
+        {mode === "login" && passkeys && passkeysSupported() && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                const session = await loginPasskey();
+                setCsrf(session.csrf);
+                onSession(session);
+              } catch (e) {
+                setError(
+                  e instanceof DOMException && e.name === "NotAllowedError"
+                    ? "Acceso con passkey cancelado."
+                    : e instanceof Error
+                      ? e.message
+                      : "No se pudo usar la passkey",
+                );
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Entrar con passkey
+          </button>
+        )}
       </form>
     </main>
   );

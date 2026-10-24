@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type QueryResult, type TableSchema } from "../api";
 import { ActionMenu } from "../ActionMenu";
 import { Dialog } from "../Dialog";
+import { useConfirm } from "../Confirm";
 import { RecordDetail, type RecordSnapshot } from "../RecordDetail";
 import { ResultLimitNotice } from "../ResultLimitNotice";
 import { RowEditor } from "../RowEditor";
@@ -60,6 +61,7 @@ interface Props {
 type Editing = { mode: "insert" | "edit"; values: Record<string, unknown>; pk: Record<string, unknown> };
 
 export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }: Props) {
+  const confirm = useConfirm();
   const { preferences } = usePreferences();
   const { readOnly } = ctx;
 
@@ -258,8 +260,8 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
     setEditing({ mode, values, pk: mode === "edit" ? (primaryKeyOf(schema, result.columns, row) ?? {}) : {} });
   }
 
-  function closeEditor() {
-    if (editDirty && !window.confirm("¿Descartar los cambios del registro?")) return;
+  async function closeEditor() {
+    if (editDirty && !(await confirm("¿Descartar los cambios del registro?"))) return;
     setEditing(null);
     setEditDirty(false);
   }
@@ -302,8 +304,8 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
   return (
     <>
       <form onSubmit={submitFilter} className="adminer-filter-bar">
-        <fieldset className="filter-fieldset">
-          <legend>Mostrar</legend>
+        <div className="filter-fieldset" role="group" aria-label="Mostrar columnas">
+          <span className="filter-label">Mostrar</span>
           <div className="fieldset-content">
             <button
               type="button"
@@ -359,10 +361,10 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
               </>
             )}
           </div>
-        </fieldset>
+        </div>
 
-        <fieldset className="filter-fieldset">
-          <legend>Condición</legend>
+        <div className="filter-fieldset" role="group" aria-label="Condición">
+          <span className="filter-label">Condición</span>
           <div className="fieldset-content">
             <select
               className="filter-col-select"
@@ -399,10 +401,10 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
               />
             )}
           </div>
-        </fieldset>
+        </div>
 
-        <fieldset className="filter-fieldset">
-          <legend>Ordenar</legend>
+        <div className="filter-fieldset" role="group" aria-label="Ordenar">
+          <span className="filter-label">Ordenar</span>
           <div className="fieldset-content">
             <select
               className="filter-sort-select"
@@ -422,35 +424,37 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
               desc
             </label>
           </div>
-        </fieldset>
+        </div>
 
-        <fieldset className="filter-fieldset">
-          <legend>Límite</legend>
+        <div className="filter-fieldset" role="group" aria-label="Límite">
+          <span className="filter-label">Límite</span>
           <div className="fieldset-content">
             <input
               type="number"
               className="filter-num-input"
               min="1"
+              aria-label="Límite de filas"
               max="500"
               value={draft.limit}
               onChange={(e) => setDraftField("limit", Number(e.target.value) || 50)}
             />
           </div>
-        </fieldset>
+        </div>
 
-        <fieldset className="filter-fieldset">
-          <legend>Longitud</legend>
+        <div className="filter-fieldset" role="group" aria-label="Longitud">
+          <span className="filter-label">Longitud</span>
           <div className="fieldset-content">
             <input
               type="number"
               className="filter-num-input"
               min="10"
+              aria-label="Longitud de texto"
               max="5000"
               value={draft.textLength}
               onChange={(e) => setDraftField("textLength", Number(e.target.value) || 100)}
             />
           </div>
-        </fieldset>
+        </div>
 
         <div className="filter-actions">
           {pending && <span className="muted filter-pending">Cambios sin aplicar</span>}
@@ -701,7 +705,7 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
         </div>
       </div>
 
-      {detail && <RecordDetail snapshot={detail} onClose={() => setDetail(null)} />}
+      {detail && <RecordDetail snapshot={detail} ctx={ctx} onClose={() => setDetail(null)} />}
       {editing && (
         <Dialog
           className="row-editor-dialog"

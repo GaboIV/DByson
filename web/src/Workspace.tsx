@@ -20,6 +20,7 @@ import { SqlConsole } from "./workspace/SqlConsole";
 import { StructureView } from "./workspace/StructureView";
 import { TableData } from "./workspace/TableData";
 import { TableSidebar } from "./workspace/TableSidebar";
+import { ProductivityTools } from "./workspace/ProductivityTools";
 
 export type { WorkspaceView } from "./workspace/shared";
 
@@ -79,6 +80,7 @@ export function Workspace(props: WorkspaceProps) {
   const [error, setError] = useState("");
   const [lastSql, setLastSql] = useState<{ sql: string; ms: number | null } | null>(null);
   const [creating, setCreating] = useState<"table" | "database" | null>(null);
+  const [tools, setTools] = useState(false);
 
   const databases = useDatabases(connection.id, isActive);
   const tables = useTables(connection.id, database, isActive && !!database);
@@ -110,8 +112,8 @@ export function Workspace(props: WorkspaceProps) {
     else if (next !== "browse") setActiveTab(next);
   }
 
-  function newSQL(query?: string) {
-    if (onNewSQL) onNewSQL(database, query);
+  function newSQL(query?: string, targetDatabase = database) {
+    if (onNewSQL) onNewSQL(targetDatabase, query);
     else setActiveTab("sql");
   }
 
@@ -286,26 +288,10 @@ export function Workspace(props: WorkspaceProps) {
           activeView={view}
           onOpenTable={openTable}
           onCreateTable={() => setCreating("table")}
+          onTools={() => setTools(true)}
         />
 
         <main className="ws-content">
-          {preferences.showQueries && lastSql && (
-            <div className="sql-banner">
-              <div className="sql-banner-text">
-                <code>{lastSql.sql}</code>
-                {lastSql.ms !== null && <span className="sql-time">({(lastSql.ms / 1000).toFixed(3)} s)</span>}
-              </div>
-              <div className="sql-banner-actions">
-                <button className="btn-tiny" onClick={() => void copy(lastSql.sql, "SQL copiado")} title="Copiar SQL">
-                  Copiar
-                </button>
-                <button className="btn-tiny" onClick={() => newSQL(lastSql.sql)} title="Editar en una consulta SQL">
-                  Editar en SQL
-                </button>
-              </div>
-            </div>
-          )}
-
           {tableToolbar}
           {error && (
             <div className="alert alert-error" role="alert">
@@ -358,9 +344,26 @@ export function Workspace(props: WorkspaceProps) {
             />
           )}
           {activeTab === "export" && <ExportView ctx={ctx} tables={tables.data ?? []} />}
+          {preferences.showQueries && lastSql && (
+            <div className="sql-banner sql-banner-footer">
+              <div className="sql-banner-text">
+                <code>{lastSql.sql}</code>
+                {lastSql.ms !== null && <span className="sql-time">({(lastSql.ms / 1000).toFixed(3)} s)</span>}
+              </div>
+              <div className="sql-banner-actions">
+                <button className="btn-tiny" onClick={() => void copy(lastSql.sql, "SQL copiado")} title="Copiar SQL">
+                  Copiar
+                </button>
+                <button className="btn-tiny" onClick={() => newSQL(lastSql.sql)} title="Editar en una consulta SQL">
+                  Editar en SQL
+                </button>
+              </div>
+            </div>
+          )}
         </main>
       </div>
 
+      {tools && <ProductivityTools ctx={ctx} onClose={() => setTools(false)} />}
       {confirmationDialog}
       {copyNotice}
       {creating === "table" && (

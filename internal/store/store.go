@@ -108,6 +108,33 @@ UPDATE sessions SET public_id = lower(hex(randomblob(24)));
 CREATE UNIQUE INDEX idx_sessions_public_id ON sessions(public_id);
 CREATE INDEX idx_sessions_user ON sessions(user_id);
 `,
+
+	// 4: private, encrypted query library and WebAuthn public credentials.
+	`
+CREATE TABLE saved_queries (
+  id TEXT PRIMARY KEY,
+  owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  dbname TEXT NOT NULL,
+  wrapped_dek BLOB NOT NULL,
+  secret BLOB NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_saved_queries_owner ON saved_queries(owner_id, connection_id);
+CREATE TABLE passkeys (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  credential BLOB NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_passkeys_user ON passkeys(user_id);
+CREATE TABLE passkey_handles (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  handle BLOB NOT NULL UNIQUE
+);
+`,
 }
 
 func migrate(db *sql.DB) error {

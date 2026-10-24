@@ -14,10 +14,12 @@ import (
 	"github.com/gaboiv/dbyson/internal/policy"
 	"github.com/gaboiv/dbyson/internal/store"
 	"github.com/gaboiv/dbyson/internal/vault"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 // Deps are the collaborators the HTTP layer needs.
 type Deps struct {
+	WebAuthn   *webauthn.WebAuthn
 	Store      *store.Store
 	Vault      *vault.Vault
 	Policy     *policy.HostPolicy
@@ -27,9 +29,10 @@ type Deps struct {
 }
 
 type Server struct {
-	queries       queryRegistry
-	confirmations sync.Map // short-lived, single-use challenges
-	mfaPending    mfaChallenges
+	passkeyPending passkeyCeremonies
+	queries        queryRegistry
+	confirmations  sync.Map // short-lived, single-use challenges
+	mfaPending     mfaChallenges
 	Deps
 	version  string
 	sessions *auth.Sessions
@@ -66,6 +69,15 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("POST /api/setup", s.handleSetup)
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	mux.HandleFunc("GET /api/auth/passkeys/status", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]bool{"enabled": s.WebAuthn != nil})
+	})
+	mux.HandleFunc("POST /api/auth/passkeys/login/begin", s.beginPasskeyLogin)
+	mux.HandleFunc("POST /api/auth/passkeys/login/finish", s.finishPasskeyLogin)
+	mux.Handle("GET /api/auth/passkeys", s.requireAuth(s.listPasskeys))
+	mux.Handle("POST /api/auth/passkeys/register/begin", s.requireAuth(s.beginPasskeyRegistration))
+	mux.Handle("POST /api/auth/passkeys/register/finish", s.requireAuth(s.finishPasskeyRegistration))
+	mux.Handle("POST /api/auth/passkeys/delete", s.requireAuth(s.deletePasskey))
 	mux.Handle("POST /api/auth/logout", s.requireAuth(s.handleLogout))
 	mux.Handle("GET /api/auth/me", s.requireAuth(s.handleMe))
 	mux.Handle("GET /api/auth/sessions", s.requireAuth(s.listSessions))
@@ -112,6 +124,13 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/drop", s.requireAuth(s.handleDropTable))
 	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/optimize", s.requireAuth(s.handleOptimizeTable))
 	mux.Handle("POST /api/connections/{id}/query", s.requireAuth(s.handleQuery))
+	mux.Handle("GET /api/connections/{id}/saved-queries", s.requireAuth(s.savedQueries))
+	mux.Handle("POST /api/connections/{id}/saved-queries", s.requireAuth(s.savedQueries))
+	mux.Handle("DELETE /api/connections/{id}/saved-queries/{queryID}", s.requireAuth(s.deleteSavedQuery))
+	mux.Handle("GET /api/connections/{id}/databases/{db}/relations", s.requireAuth(s.relations))
+	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/import-csv", s.requireAuth(s.importCSV))
+	mux.Handle("POST /api/connections/{id}/processes/kill", s.requireAuth(s.killProcess))
+	mux.Handle("POST /api/connections/{id}/mysql-accounts", s.requireAuth(s.mysqlAccounts))
 	mux.Handle("POST /api/connections/{id}/queries/{queryID}/cancel", s.requireAuth(s.cancelQuery))
 	mux.Handle("GET /api/connections/{id}/export", s.requireAuth(s.handleExport))
 

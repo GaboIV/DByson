@@ -22,7 +22,7 @@ export interface ViewContext {
   /** Shows the statement in the SQL banner. */
   reportSql: (sql: string, ms?: number | null) => void;
   openView: (view: WorkspaceView) => void;
-  newSQL: (query?: string) => void;
+  newSQL: (query?: string, database?: string) => void;
   /** Rendered above the view: table view navigation and table-level actions. */
   toolbar?: ReactNode;
 }

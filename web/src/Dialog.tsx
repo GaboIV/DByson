@@ -24,6 +24,8 @@ export function Dialog({
       ].filter((e) => e.getClientRects().length);
     elements()[0]?.focus();
     const key = (e: KeyboardEvent) => {
+      const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter((el) => el.getClientRects().length);
+      if (dialogs.at(-1) !== root) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();

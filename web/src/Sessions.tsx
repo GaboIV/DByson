@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { useConfirm } from "./Confirm";
 
 interface ActiveSession {
   id: string;
@@ -16,6 +17,7 @@ interface ActiveSession {
 const date = (seconds: number) => new Date(seconds * 1000).toLocaleString();
 
 export function SessionsPanel() {
+  const confirm = useConfirm();
   const [items, setItems] = useState<ActiveSession[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -42,9 +44,9 @@ export function SessionsPanel() {
 
   async function revoke(item?: ActiveSession) {
     if (
-      !window.confirm(
+      !(await confirm(
         item ? `¿Cerrar ${item.current ? "esta sesión" : "la sesión seleccionada"}?` : "¿Cerrar todas las demás sesiones de tu cuenta?",
-      )
+      ))
     )
       return;
     setBusy(true);

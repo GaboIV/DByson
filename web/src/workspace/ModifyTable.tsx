@@ -3,6 +3,7 @@ import type { QueryResponse, TableSchema } from "../api";
 import { Spinner } from "../Spinner";
 import { invalidateSchema, invalidateTables } from "./catalog";
 import { errorText, type ViewContext } from "./shared";
+import { StructureDesigner } from "./StructureDesigner";
 
 interface Props {
   ctx: ViewContext;
@@ -59,6 +60,7 @@ export function ModifyTable({ ctx, schema, onDirtyChange }: Props) {
 
   return (
     <div className="alter-table-view">
+      <StructureDesigner ctx={ctx} schema={schema} onSQL={setSql} />
       <div className="alter-header">
         <h3>
           Modificar tabla: <strong>{t}</strong>

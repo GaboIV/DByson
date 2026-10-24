@@ -11,9 +11,10 @@ interface Props {
   activeView: WorkspaceView;
   onOpenTable: (table: string) => void;
   onCreateTable: () => void;
+  onTools: () => void;
 }
 
-export function TableSidebar({ ctx, tables, filter, onFilter, activeView, onOpenTable, onCreateTable }: Props) {
+export function TableSidebar({ ctx, tables, filter, onFilter, activeView, onOpenTable, onCreateTable, onTools }: Props) {
   const visible = (tables.data ?? []).filter((t) => cleanStr(t.name).includes(cleanStr(filter)));
 
   return (
@@ -34,6 +35,10 @@ export function TableSidebar({ ctx, tables, filter, onFilter, activeView, onOpen
           📦 Exportar
         </button>
       </div>
+
+      <button className="sidebar-tools" onClick={onTools}>
+        Herramientas · Importar / ER / Administración
+      </button>
 
       <div className="sidebar-search">
         <input

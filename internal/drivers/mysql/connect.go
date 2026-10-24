@@ -127,6 +127,10 @@ func Open(cfg Config, dial Dialer) (*sql.DB, error) {
 	mc.ReadTimeout = 0
 	mc.ParseTime = true
 	mc.Collation = "utf8mb4_general_ci" // also fixes the connection charset to utf8mb4
+	// CREATE USER cannot be prepared on MySQL. Delegate parameter interpolation
+	// to the driver, which escapes with the active SQL mode and fixed utf8mb4 charset.
+	// MultiStatements stays disabled; application values never become SQL fragments.
+	mc.InterpolateParams = true
 
 	// Hardening: never allow the server to request local files (LOAD DATA LOCAL INFILE),
 	// never send the password in cleartext, never silently fall back to plaintext.

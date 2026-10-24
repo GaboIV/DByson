@@ -23,6 +23,8 @@ services:
     environment:
       DBYSON_MODE: personal
       DBYSON_ALLOWED_HOSTS: database
+      DBYSON_WEBAUTHN_RP_ID: localhost
+      DBYSON_WEBAUTHN_ORIGIN: http://localhost:18080
     tmpfs:
       - /data:uid=65532,gid=65532,mode=0700
     depends_on:

@@ -3,6 +3,7 @@ import { api, ApiError, type AuditEntry, type Connection, type MFAStatus } from 
 import { Dialog } from "./Dialog";
 import { useClipboard } from "./clipboard";
 import { SessionsPanel } from "./Sessions";
+import { PasskeysPanel } from "./PasskeysPanel";
 
 const errorText = (e: unknown) => (e instanceof ApiError ? e.message : "No se pudo completar la operación");
 
@@ -152,6 +153,7 @@ export function SecurityDialog({ username, onClose, onChanged }: SecurityProps) 
           )}
           {errorLine}
           <SessionsPanel />
+          <PasskeysPanel />
         </div>
       )}
 

@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Connection, type TestResponse } from "./api";
 import { ConnectionForm } from "./ConnectionForm";
 import { ConnectionTransfer } from "./ConnectionTransfer";
+import { useConfirm } from "./Confirm";
 interface ConnectionsProps {
   onSelect?: (conn: Connection) => void;
   storageKey?: string;
   startNew?: boolean;
 }
 export function Connections({ onSelect, storageKey = "dbyson", startNew = false }: ConnectionsProps) {
+  const confirm = useConfirm();
   const [items, setItems] = useState<Connection[] | null>(null),
     [editing, setEditing] = useState<Connection | "new" | null>(startNew ? "new" : null),
     [status, setStatus] = useState<Record<string, string>>({}),
@@ -59,7 +61,7 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false 
     }
   }
   async function remove(c: Connection) {
-    if (!window.confirm(`¿Eliminar el perfil «${c.name}»?`)) return;
+    if (!(await confirm(`¿Eliminar el perfil «${c.name}»?`))) return;
     try {
       await api("DELETE", `/api/connections/${c.id}`);
       setSelected((s) => s.filter((id) => id !== c.id));

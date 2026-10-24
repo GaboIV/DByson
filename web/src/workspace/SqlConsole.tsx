@@ -11,6 +11,9 @@ import { SqlEditor } from "./SqlEditor";
 import { downloadSql, pickSqlFile } from "./sqlFile";
 import { extractTablesAndAliases } from "./sqlMetadata";
 import { deriveQueryTitle, splitSqlStatements } from "./sqlSplitter";
+import { SavedQueries } from "./SavedQueries";
+import { ExplainPlan } from "./ExplainPlan";
+import { useConfirm } from "../Confirm";
 
 const DEFAULT_SQL = "SELECT 1;";
 
@@ -33,6 +36,7 @@ export interface StatementExecution {
 }
 
 export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: Props) {
+  const confirm = useConfirm();
   const baseline = initialSQL || DEFAULT_SQL;
   const [sql, setSql] = useState(baseline);
   const [saved, setSaved] = useState(baseline); // what the dirty marker compares against
@@ -55,6 +59,8 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
   const [history, setHistory] = useState<string[]>([]);
   const [detail, setDetail] = useState<RecordSnapshot | null>(null);
   const [name, setName] = useState(title);
+  const [library, setLibrary] = useState(false);
+  const [plan, setPlan] = useState<QueryResult | null>(null);
 
   // Fetch tables and current table schema for autocomplete
   const tables = useTables(ctx.connection.id, ctx.database, !!ctx.database);
@@ -149,9 +155,10 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
 
   const hasSelection = selectedText.trim().length > 0;
 
-  async function run() {
+  async function run(override?: string) {
     if (active.current) return;
-    const targetText = (hasSelection ? selectedText : sql).trim();
+    const targetText = (override ?? (hasSelection ? selectedText : sql)).trim();
+    setPlan(null);
     if (!targetText) return;
 
     const stmts = splitSqlStatements(targetText);
@@ -201,7 +208,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
         }
 
         if (!r.ok) {
-          if (r.cancelled) batch.stop = true;
+          batch.stop = true;
           const errMsg = r.error || "Error ejecutando la consulta";
           setExecutions((prev) =>
             prev.map((item, idx) =>
@@ -211,6 +218,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
             ),
           );
         } else {
+          if (/^\s*EXPLAIN\s+(?!FORMAT|ANALYZE)/i.test(stmt) && r.result) setPlan(r.result);
           setExecutions((prev) => prev.map((item, idx) => (idx === i ? { ...item, status: "success", result: r.result ?? null } : item)));
           if (r.result) {
             ctx.reportSql(r.result.executedSql || stmt, r.result.executionMs);
@@ -218,14 +226,16 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
           }
         }
       } catch (e) {
+        const stoppedByUser = batch.stop;
+        batch.stop = true;
         const errMsg = errorText(e, "Error de red o del servidor");
         setExecutions((prev) =>
           prev.map((item, idx) =>
             idx === i
               ? {
                   ...item,
-                  status: batch.stop ? "cancelled" : "error",
-                  error: batch.stop ? "Se solicitó cancelar la consulta. Una operación ya completada no se revierte." : errMsg,
+                  status: stoppedByUser ? "cancelled" : "error",
+                  error: stoppedByUser ? "Se solicitó cancelar la consulta. Una operación ya completada no se revierte." : errMsg,
                 }
               : item,
           ),
@@ -270,7 +280,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
   }
 
   async function open() {
-    if (sql !== saved && !window.confirm("La consulta tiene cambios sin guardar. ¿Reemplazarla por el archivo?")) return;
+    if (sql !== saved && !(await confirm("La consulta tiene cambios sin guardar. ¿Reemplazarla por el archivo?"))) return;
     try {
       const file = await pickSqlFile();
       if (!file) return;
@@ -315,6 +325,13 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
           <h2>Consola SQL</h2>
         )}
         <div className="sql-file-actions">
+          <button onClick={() => setLibrary(true)}>Consultas guardadas</button>
+          <button
+            disabled={running || !/^\s*(SELECT|WITH)\b/i.test(hasSelection ? selectedText : sql)}
+            onClick={() => void run("EXPLAIN " + (hasSelection ? selectedText : sql))}
+          >
+            EXPLAIN visual
+          </button>
           <button onClick={() => void open()} title="Reemplazar el contenido con un archivo .sql">
             📂 Abrir .sql
           </button>
@@ -383,6 +400,8 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
         </div>
       )}
       {error && <div className="alert alert-error">{error}</div>}
+      {plan && <ExplainPlan result={plan} />}
+      {library && <SavedQueries ctx={ctx} sql={sql} title={name} onSaved={() => setSaved(sql)} onClose={() => setLibrary(false)} />}
 
       {/* Result Tabs and Result Section */}
       {executions.length > 0 && (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useClipboard } from "./clipboard";
 import { Dialog } from "./Dialog";
+import { useConfirm } from "./Confirm";
 import {
   api,
   emptyHop,
@@ -379,8 +380,9 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
       setBusy("");
     }
   }
-  function cancel() {
-    if (!dirty.current || window.confirm("¿Descartar los cambios de esta conexión?")) onCancel();
+  const confirm = useConfirm();
+  async function cancel() {
+    if (!dirty.current || (await confirm("¿Descartar los cambios de esta conexión?"))) onCancel();
   }
   return (
     <form className="connection-wizard card" onSubmit={submit} ref={form}>

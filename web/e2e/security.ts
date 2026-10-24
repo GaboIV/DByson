@@ -100,8 +100,8 @@ export function secureConnectivityTests() {
         const panel = page.getByRole("region", { name: "Sesiones activas", exact: true });
         await expect(panel.getByText("Esta sesión", { exact: true })).toBeVisible();
         await expect(panel.getByRole("button", { name: "Cerrar las demás sesiones" })).toBeEnabled();
-        page.once("dialog", (dialog) => dialog.accept());
         await panel.getByRole("button", { name: "Cerrar las demás sesiones" }).click();
+        await page.getByRole("dialog", { name: "Confirmar acción" }).getByRole("button", { name: "Continuar", exact: true }).click();
         await expect(panel.locator(".session-item")).toHaveCount(1);
         await expect.poll(sleepingQueries).toBe(0);
         expect((await second.request.get("/api/auth/me")).status()).toBe(401);

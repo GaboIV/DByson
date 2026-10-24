@@ -12,6 +12,11 @@ import (
 
 // actionNames gives stable, readable names to audited routes (keyed by ServeMux pattern).
 var actionNames = map[string]string{
+	"POST /api/connections/{id}/mysql-accounts":                             "mysql.account.manage",
+	"POST /api/connections/{id}/processes/kill":                             "mysql.process.kill",
+	"POST /api/connections/{id}/saved-queries":                              "query.save",
+	"DELETE /api/connections/{id}/saved-queries/{queryID}":                  "query.saved.delete",
+	"POST /api/connections/{id}/databases/{db}/tables/{table}/import-csv":   "data.import.csv",
 	"DELETE /api/auth/sessions/{sessionID}":                                 "auth.session.revoke",
 	"POST /api/auth/sessions/revoke-others":                                 "auth.sessions.revoke_others",
 	"POST /api/connections/{id}/queries/{queryID}/cancel":                   "query.cancel",

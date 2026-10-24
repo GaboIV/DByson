@@ -137,11 +137,11 @@ export function acceptanceTests() {
       await page.getByRole("button", { name: "🔄", exact: true }).click();
       await page.getByRole("button", { name: "Editar registro 2", exact: true }).click();
       await edit.getByLabel("nombre", { exact: true }).fill("NO GUARDAR");
-      page.once("dialog", (d) => d.dismiss());
       await edit.getByRole("button", { name: "Cancelar", exact: true }).click();
+      await page.getByRole("dialog", { name: "Confirmar acción" }).getByRole("button", { name: "Cancelar", exact: true }).click();
       await expect(edit.getByLabel("nombre", { exact: true })).toHaveValue("NO GUARDAR");
-      page.once("dialog", (d) => d.accept());
       await edit.getByRole("button", { name: "Cancelar", exact: true }).click();
+      await page.getByRole("dialog", { name: "Confirmar acción" }).getByRole("button", { name: "Continuar", exact: true }).click();
       await expect(edit).toBeHidden();
       expect(db("SELECT nombre FROM qa_records WHERE codigo='QA-002'")).toBe("Segundo registro editado");
       expect(db("SELECT COUNT(*) FROM qa_records")).toBe("2");
@@ -192,14 +192,10 @@ export function acceptanceTests() {
       await page.getByRole("tab", { name: "Contenido", exact: true }).click();
       await page.getByRole("tab", { name: "Consulta 1", exact: true }).click();
       await expect(page.locator(".cm-content:visible")).toHaveText("SELECT 'borrador';");
-      let dismissed = false;
-      page.once("dialog", async (d) => {
-        expect(d.message()).toContain("cambios sin guardar");
-        dismissed = true;
-        await d.dismiss();
-      });
       await page.getByRole("button", { name: "Cerrar pestaña Consulta 1", exact: true }).click();
-      expect(dismissed).toBeTruthy();
+      const discard = page.getByRole("dialog", { name: "Confirmar acción" });
+      await expect(discard).toContainText("cambios sin guardar");
+      await discard.getByRole("button", { name: "Cancelar", exact: true }).click();
       await expect(page.locator(".cm-content:visible")).toHaveText("SELECT 'borrador';");
       const pending = page.waitForEvent("dialog");
       const reload = page.reload({ timeout: 5000 }).catch(() => {});
@@ -208,14 +204,14 @@ export function acceptanceTests() {
       await dialog.dismiss();
       await reload;
       await expect(page.locator(".cm-content:visible")).toHaveText("SELECT 'borrador';");
-      page.once("dialog", (d) => d.accept());
       await page.getByRole("button", { name: "Cerrar pestaña Consulta 1", exact: true }).click();
+      await discard.getByRole("button", { name: "Continuar", exact: true }).click();
       await expect(page.getByRole("tab", { name: "Consulta 1", exact: true })).toHaveCount(0);
-      page.once("dialog", (d) => d.dismiss());
       await page.getByRole("button", { name: "Cerrar pestaña qa_drafts", exact: true }).click();
+      await discard.getByRole("button", { name: "Cancelar", exact: true }).click();
       await expect(page.getByRole("tab", { name: /MySQL E2E · qa_drafts/ })).toBeVisible();
-      page.once("dialog", (d) => d.accept());
       await page.getByRole("button", { name: "Cerrar pestaña qa_drafts", exact: true }).click();
+      await discard.getByRole("button", { name: "Continuar", exact: true }).click();
       expect(db("SELECT COUNT(*) FROM qa_drafts")).toBe("1");
       expect(
         db(
@@ -264,9 +260,9 @@ export function acceptanceTests() {
       await saved.saveAs(file);
       expect(await readFile(file, "utf8")).toContain("archivo recuperado");
       await editor.fill("SELECT 'reemplazar';");
-      page.once("dialog", (d) => d.accept());
       const chooser = page.waitForEvent("filechooser");
       await page.getByRole("button", { name: "📂 Abrir .sql", exact: true }).click();
+      await page.getByRole("dialog", { name: "Confirmar acción" }).getByRole("button", { name: "Continuar", exact: true }).click();
       await (await chooser).setFiles(file);
       await expect(editor).toHaveText("SELECT 'archivo recuperado' AS prueba;");
       await expect.poll(() => editor.locator("span").count()).toBeGreaterThan(0);

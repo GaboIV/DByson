@@ -3,7 +3,7 @@
 > Un IDE web de bases de datos: **la sencillez de Adminer, la potencia de phpMyAdmin, una UX moderna y seguridad por defecto.**
 > Se distribuye como una sola imagen Docker que cualquier persona levanta con un comando.
 
-**Revisión:** 23 de octubre de 2026 · **Nombre:** DByson (antes AdminBase; ver [ADR 0006](adr/0006-renombrado-a-dbyson.md)) · **Licencia:** Apache-2.0
+**Revisión:** 24 de octubre de 2026 · **Nombre:** DByson (antes AdminBase; ver [ADR 0006](adr/0006-renombrado-a-dbyson.md)) · **Licencia:** Apache-2.0
 
 **Documentos relacionados:** [modelo de amenazas](threat-model.md) · [decisiones de arquitectura](adr/README.md) · detalle de lo implementado en [seguridad del MVP](MVP_SEGURIDAD.md), [experiencia de consulta](EXPERIENCIA_CONSULTA.md), [interfaz y preferencias](INTERFAZ_Y_PREFERENCIAS.md) y [SSH y espacios de trabajo](SSH_Y_ESPACIOS.md). La [evaluación del 21 de octubre](EVALUACION_2026-10-21.md) es histórica.
 
@@ -113,15 +113,9 @@ El estado detallado, con lo implementado, lo parcial y los riesgos aceptados, es
 
 **Hecho:** inicio con tarjetas por entorno, búsqueda y favoritas; asistente de conexión con descubrimiento de MySQL en Docker; explorador de bases y tablas; filtros en borrador que solo se aplican con *Mostrar*; conteo exacto bajo demanda; detalle de registro con JSON; copiar celda/fila; editar, duplicar, insertar y borrar filas; estructura y DDL; plantillas de `ALTER TABLE`; consola SQL; exportación SQL/CSV/JSON en streaming; pestañas agrupadas por tabla; consultas con nombre propio, descarga y apertura de `.sql`; paleta `Ctrl+K`; 5 temas; modo *Sólo ver*; historial de la sesión; caché sin recargas al cambiar de pestaña; indicadores de carga.
 
-**Pendiente, por valor para el uso diario:**
-1. Editor SQL con resaltado y autocompletado por esquema (CodeMirror 6), ejecutar la selección, varias sentencias.
-2. Consultas guardadas en el servidor (opt-in; hoy solo como archivo `.sql`).
-3. Navegación por claves foráneas (clic en un valor → registro relacionado).
-4. EXPLAIN visual con advertencias.
-5. Importación CSV/SQL con progreso.
-6. Editor visual de estructura con vista previa del DDL.
-7. Diagrama ER.
-8. Interfaz en inglés (i18n).
+**Implementado en la rama de productividad:** CodeMirror y ejecución por sentencia; biblioteca privada cifrada en el servidor; navegación por claves foráneas desde el detalle; EXPLAIN visual; CSV transaccional y scripts revisados en SQL; diseñador DDL; diagrama ER; procesos; cuentas MySQL y passkeys. Uso y límites en [PRODUCTIVIDAD.md](PRODUCTIVIDAD.md).
+
+**Pendiente:** integrar la rama y validar CI remoto, completar las herramientas avanzadas fuera del alcance del diseñador inicial y ofrecer interfaz en inglés (i18n).
 
 ---
 
@@ -173,17 +167,18 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 - [ ] Integrar la rama, confirmar la CI remota y configurar los certificados reales del despliegue.
 - **Entregable:** `v0.2.0`, apto para producción remota en uso personal.
 
-### Fase 3 — Productividad · 🟡 iniciada
+### Fase 3 — Productividad · 🟡 implementada en rama; pendiente de integración
 - [x] Pestañas agrupadas por tabla, paleta de comandos, consultas con nombre y archivos `.sql`.
 - [x] Editor SQL con CodeMirror 6: resaltado, autocompletado por esquema, ejecutar selección.
-- [ ] Consultas guardadas en el servidor (opt-in) y snippets.
-- [ ] Navegación por claves foráneas.
-- [ ] EXPLAIN visual.
-- [ ] Importación CSV/SQL con progreso.
-- [ ] Editor visual de estructura con vista previa del DDL.
-- [ ] Lista de procesos con *kill*; usuarios y permisos de MySQL (`GRANT`).
-- [ ] Diagrama ER.
-- [ ] Passkeys/WebAuthn.
+- [x] Consultas privadas cifradas en el servidor (guardado explícito), con snippets del editor.
+- [x] Navegación por claves foráneas, incluidas claves compuestas y bases distintas.
+- [x] EXPLAIN visual con estimaciones y advertencias de acceso completo.
+- [x] Importación CSV transaccional y SQL revisado en el editor, con estado por operación/sentencia.
+- [x] Editor visual de estructura con vista previa del DDL (columnas, tipo, índice simple/único y renombrado).
+- [x] Lista de procesos con KILL QUERY; cuentas y permisos acotados de MySQL.
+- [x] Diagrama ER de relaciones declaradas, con filtro y lista accesible.
+- [x] Passkeys/WebAuthn con verificación de usuario y origen explícito.
+- Detalle de uso y límites: [PRODUCTIVIDAD.md](PRODUCTIVIDAD.md). Cambios en `codex/productivity`, pendientes de commit/PR y CI remoto. Activar passkeys en una instalación requiere configurar su origen y registrar dispositivos.
 - **Entregable:** `v0.5.0`, el equipo deja Adminer/phpMyAdmin para el trabajo diario.
 
 ### Fase 4 — Equipos · ⬜ base preparada
@@ -272,4 +267,4 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 1. Integrar las mejoras de interfaz y la Fase 2, y confirmar su CI remota.
 2. Configurar los certificados reales para activar mTLS siguiendo la guía de despliegue.
 3. Publicar la siguiente versión cuando se apruebe la integración; no mover la etiqueta v0.1.0 existente.
-4. Fase 3: consultas guardadas, navegación por claves foráneas, EXPLAIN e importación. CodeMirror ya está implementado.
+4. Integrar la Fase 3 desde `codex/productivity`, revisar sus límites documentados y después iniciar la gestión de usuarios de DByson de la Fase 4.

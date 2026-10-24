@@ -39,6 +39,7 @@ Por defecto el binario escucha solo en `127.0.0.1:8080` (`DBYSON_LISTEN` para ca
 | `DBYSON_REQUIRE_MFA` | según el modo | Fuerza la política: `off` (opcional), `sensitive` (conexiones `prod` y túneles SSH, incluida su exportación con credenciales) o `all` (todo salvo el inicio de sesión y la propia configuración de 2FA). Si se define, gana sobre el modo. |
 | `DBYSON_TLS_CERT_FILE` / `DBYSON_TLS_KEY_FILE` | — | Certificado de servidor y clave PEM para HTTPS nativo (TLS 1.3). Deben configurarse juntos. |
 | `DBYSON_TLS_CLIENT_CA_FILE` | — | CA PEM de clientes: exige certificado válido en todo el listener HTTPS, incluido el login. Requiere certificado y clave de servidor. |
+| `DBYSON_WEBAUTHN_RP_ID` / `DBYSON_WEBAUTHN_ORIGIN` | — | Dominio y origen HTTPS explícitos para passkeys; deben configurarse juntos. HTTP solo para localhost. |
 
 Generar una clave maestra: `openssl rand -base64 32`.
 
@@ -55,6 +56,8 @@ Resultados limitados a 1.000 filas y 8 MiB de datos JSON, solo lectura reforzado
 ## Consulta diaria
 
 Filtros aplicados con Mostrar, cargas cancelables, paginación sin conteo obligatorio, conteo exacto opcional y copia/detalle de registros. Uso y pruebas en [docs/EXPERIENCIA_CONSULTA.md](docs/EXPERIENCIA_CONSULTA.md).
+
+Biblioteca privada de consultas cifradas en el servidor, navegación por claves foráneas, EXPLAIN visual, importación CSV/SQL, diseñador de estructura, procesos, cuentas MySQL, diagrama ER y passkeys: [guía de productividad](docs/PRODUCTIVIDAD.md). Los cambios de esta fase requieren reconstruir la aplicación; no están en la imagen publicada v0.1.0.
 
 ## SSH y trabajo diario
 
