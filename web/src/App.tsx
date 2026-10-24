@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, setCsrf, type Session } from "./api";
+import { api, setCsrf, SESSION_EXPIRED_EVENT, type Session } from "./api";
 import { AuthScreen } from "./AuthScreen";
 import { PreferencesProvider } from "./Preferences";
 import { Workbench } from "./Workbench";
@@ -7,10 +7,40 @@ import { Spinner } from "./Spinner";
 import { clearCatalog } from "./workspace/catalog";
 
 type State =
-  { kind: "loading" } | { kind: "error" } | { kind: "setup"; needsToken: boolean } | { kind: "login" } | { kind: "app"; session: Session };
+  | { kind: "loading" }
+  | { kind: "error" }
+  | { kind: "setup"; needsToken: boolean }
+  | { kind: "login"; notice?: string }
+  | { kind: "app"; session: Session };
 
 export function App() {
   const [state, setState] = useState<State>({ kind: "loading" });
+  useEffect(() => {
+    const expired = () => {
+      clearCatalog();
+      setState((old) =>
+        old.kind === "app" ? { kind: "login", notice: "Tu sesión venció o fue revocada. Vuelve a iniciar sesión para continuar." } : old,
+      );
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, expired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, expired);
+  }, []);
+
+  useEffect(() => {
+    if (state.kind !== "app") return;
+    let lastCheck = Date.now();
+    const check = () => {
+      if (document.visibilityState !== "visible" || Date.now() - lastCheck < 30000) return;
+      lastCheck = Date.now();
+      void api("GET", "/api/auth/me").catch(() => {});
+    };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [state.kind]);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +99,7 @@ export function App() {
         <AuthScreen
           mode="login"
           needsToken={false}
+          notice={state.notice}
           onSession={(session) => {
             setState({ kind: "app", session });
           }}

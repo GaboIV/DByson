@@ -10,32 +10,48 @@ export class ApiError extends Error {
 
 let csrf = "";
 let viewOnly = false;
+let sessionVersion = 0;
+let sessionRequests = new AbortController();
+export const SESSION_EXPIRED_EVENT = "dbyson-session-expired";
 export const setViewOnly = (value: boolean) => {
   viewOnly = value;
 };
 export const setCsrf = (t: string) => {
+  if (csrf === t) return;
+  sessionRequests.abort();
+  sessionRequests = new AbortController();
+  sessionVersion++;
   csrf = t;
 };
 
 export async function api<T>(method: string, path: string, body?: unknown, options: { signal?: AbortSignal } = {}): Promise<T> {
   const started = performance.now();
+  const requestCsrf = csrf;
+  const requestVersion = sessionVersion;
+  const signal = requestCsrf ? AbortSignal.any([sessionRequests.signal, ...(options.signal ? [options.signal] : [])]) : options.signal;
   const res = await fetch(path, {
     method,
     credentials: "same-origin",
-    signal: options.signal,
+    signal,
     headers: {
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       ...(viewOnly ? { "X-DByson-Read-Only": "1" } : {}),
-      ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+      ...(requestCsrf ? { "X-CSRF-Token": requestCsrf } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch((error) => {
-    if (options.signal?.aborted) throw error;
+    if (signal?.aborted) throw error;
     return {};
   });
-  if (options.signal?.aborted) throw new DOMException("Request cancelled", "AbortError");
+  if (signal?.aborted || (requestCsrf && requestVersion !== sessionVersion)) throw new DOMException("Request cancelled", "AbortError");
+  // A wrong password/TOTP also returns 401: only invalidate a known application
+  // session when the server explicitly reports missing/expired authentication.
+  if (res.status === 401 && requestCsrf && (data.code === "session_expired" || data.error === "authentication required")) {
+    setCsrf("");
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+  }
   const sql = data?.result?.executedSql || data?.executedSql;
   let queryDatabase: string | undefined;
   if (body && typeof body === "object" && "database" in body && typeof body.database === "string") queryDatabase = body.database;

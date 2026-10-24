@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Dialog } from "./Dialog";
+import { SESSION_EXPIRED_EVENT } from "./api";
 
 const ConfirmContext = createContext<(message: string) => Promise<boolean>>(async () => false);
 export const useConfirm = () => useContext(ConfirmContext);
@@ -18,13 +19,19 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     pending.current = null;
     setMessage("");
   }
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const expired = () => {
       pending.current?.(false);
       pending.current = null;
-    },
-    [],
-  );
+      setMessage("");
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, expired);
+    return () => {
+      window.removeEventListener(SESSION_EXPIRED_EVENT, expired);
+      pending.current?.(false);
+      pending.current = null;
+    };
+  }, []);
   return (
     <ConfirmContext.Provider value={confirm}>
       {children}

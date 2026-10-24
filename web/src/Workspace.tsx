@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import type { Connection } from "./api";
 import { Brand } from "./Brand";
 import { TabStrip } from "./TabStrip";
+import { Select } from "./Select";
 import { useClipboard } from "./clipboard";
 import { usePreferences } from "./Preferences";
 import { useConfirmedApi } from "./useConfirmedApi";
@@ -261,15 +262,17 @@ export function Workspace(props: WorkspaceProps) {
 
         <div className="db-selector">
           <label htmlFor={dbSelectId}>BD:</label>
-          <select id={dbSelectId} value={database} onChange={(e) => openDatabase(e.target.value)}>
-            <option value="">{databases.loading ? "Cargando…" : "(Seleccionar BD)"}</option>
-            {database && !databases.data?.some((d) => d.name === database) && <option value={database}>{database}</option>}
-            {databases.data?.map((d) => (
-              <option key={d.name} value={d.name}>
-                {d.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            id={dbSelectId}
+            value={database}
+            onChange={openDatabase}
+            label="BD:"
+            options={[
+              { value: "", label: databases.loading ? "Cargando…" : "(Seleccionar BD)" },
+              ...(database && !databases.data?.some((d) => d.name === database) ? [{ value: database, label: database }] : []),
+              ...(databases.data ?? []).map((d) => ({ value: d.name, label: d.name })),
+            ]}
+          />
         </div>
 
         <div className="spacer" />
@@ -291,7 +294,7 @@ export function Workspace(props: WorkspaceProps) {
           onTools={() => setTools(true)}
         />
 
-        <main className="ws-content">
+        <main className={`ws-content${table && activeTab === "data" ? " ws-content-table-data" : ""}`}>
           {tableToolbar}
           {error && (
             <div className="alert alert-error" role="alert">

@@ -6,10 +6,11 @@ import { loginPasskey, passkeysSupported } from "./passkeys";
 interface Props {
   mode: "setup" | "login";
   needsToken: boolean;
+  notice?: string;
   onSession: (s: Session) => void;
 }
 
-export function AuthScreen({ mode, needsToken, onSession }: Props) {
+export function AuthScreen({ mode, needsToken, onSession, notice }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
@@ -122,6 +123,11 @@ export function AuthScreen({ mode, needsToken, onSession }: Props) {
           <Brand />
         </div>
         <h1>{mode === "setup" ? "Bienvenido a DByson" : "Entra a DByson"}</h1>
+        {notice && (
+          <p className="session-expired-notice" role="alert">
+            {notice}
+          </p>
+        )}
 
         <p className="muted">{mode === "setup" ? "Crea la cuenta de administrador para empezar." : "Inicia sesión para continuar."}</p>
         <label>

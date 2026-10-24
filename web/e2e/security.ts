@@ -105,6 +105,11 @@ export function secureConnectivityTests() {
         await expect(panel.locator(".session-item")).toHaveCount(1);
         await expect.poll(sleepingQueries).toBe(0);
         expect((await second.request.get("/api/auth/me")).status()).toBe(401);
+        await expect(second.getByRole("button", { name: "▶ Ejecutar todo", exact: true })).toBeEnabled();
+        await second.locator(".cm-content:visible").fill("SELECT 42;");
+        await second.getByRole("button", { name: "▶ Ejecutar todo", exact: true }).click();
+        await expect(second.getByRole("heading", { name: "Entra a DByson", exact: true })).toBeVisible();
+        await expect(second.getByRole("alert")).toContainText("Tu sesión venció o fue revocada");
         expect((await page.request.get("/api/auth/me")).status()).toBe(200);
         await page.screenshot({ path: info.outputPath("sesiones-activas.png"), fullPage: true });
       } finally {

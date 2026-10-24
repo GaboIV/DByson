@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { TableInfo } from "../api";
-import { enc, type ViewContext } from "./shared";
+import { api, type TableInfo } from "../api";
+import { enc, errorText, type ViewContext } from "./shared";
 
 type Format = "sql" | "csv" | "json";
 
@@ -9,6 +9,8 @@ export function ExportView({ ctx, tables }: { ctx: ViewContext; tables: TableInf
   const [table, setTable] = useState(ctx.table);
   const [structure, setStructure] = useState(true);
   const [data, setData] = useState(true);
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState("");
 
   const ready = !!ctx.database && (format === "sql" ? structure || data : !!table);
   const href = ready
@@ -55,10 +57,41 @@ export function ExportView({ ctx, tables }: { ctx: ViewContext; tables: TableInf
           </div>
         )}
         <div className="actions">
-          <a className="primary button-link" href={href} aria-disabled={!ready} download>
-            ⬇ Descargar archivo
+          <a
+            className="primary button-link"
+            href={href}
+            aria-disabled={!ready || checking}
+            download
+            onClick={async (event) => {
+              event.preventDefault();
+              if (!href || checking) return;
+              setChecking(true);
+              setError("");
+              try {
+                // Keep the download streamed by the browser; verify the session first
+                // so a stale cookie redirects the app instead of downloading a 401 JSON.
+                await api("GET", "/api/auth/me");
+                const link = document.createElement("a");
+                link.href = href;
+                // The export endpoint supplies Content-Disposition and its filename.
+                document.body.append(link);
+                link.click();
+                link.remove();
+              } catch (e) {
+                setError(errorText(e, "No se pudo iniciar la descarga"));
+              } finally {
+                setChecking(false);
+              }
+            }}
+          >
+            {checking ? "Comprobando sesión…" : "⬇ Descargar archivo"}
           </a>
         </div>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );

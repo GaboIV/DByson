@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type QueryResult, type TableSchema } from "../api";
 import { ActionMenu } from "../ActionMenu";
 import { Dialog } from "../Dialog";
+import { Select } from "../Select";
 import { useConfirm } from "../Confirm";
 import { RecordDetail, type RecordSnapshot } from "../RecordDetail";
 import { ResultLimitNotice } from "../ResultLimitNotice";
@@ -366,31 +367,20 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
         <div className="filter-fieldset" role="group" aria-label="Condición">
           <span className="filter-label">Condición</span>
           <div className="fieldset-content">
-            <select
+            <Select
               className="filter-col-select"
               value={draft.filterCol}
-              onChange={(e) => setDraftField("filterCol", e.target.value)}
-              title="Columna (o donde sea)"
-            >
-              <option value="">(donde sea)</option>
-              {allColumns.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-            <select
+              onChange={(value) => setDraftField("filterCol", value)}
+              label="Columna (o donde sea)"
+              options={[{ value: "", label: "(donde sea)" }, ...allColumns.map((c) => ({ value: c, label: c }))]}
+            />
+            <Select
               className="filter-op-select"
               value={draft.filterOp}
-              onChange={(e) => setDraftField("filterOp", e.target.value)}
-              title="Operador de búsqueda"
-            >
-              {OPERATORS.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => setDraftField("filterOp", value)}
+              label="Operador de búsqueda"
+              options={OPERATORS.map(([value, label]) => ({ value, label }))}
+            />
             {draft.filterOp !== "IS_NULL" && draft.filterOp !== "IS_NOT_NULL" && (
               <input
                 type="text"
@@ -406,19 +396,13 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
         <div className="filter-fieldset" role="group" aria-label="Ordenar">
           <span className="filter-label">Ordenar</span>
           <div className="fieldset-content">
-            <select
+            <Select
               className="filter-sort-select"
               value={draft.sortCol}
-              onChange={(e) => setDraftField("sortCol", e.target.value)}
-              title="Columna de ordenación"
-            >
-              <option value="">(clave primaria, si existe)</option>
-              {allColumns.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => setDraftField("sortCol", value)}
+              label="Columna de ordenación"
+              options={[{ value: "", label: "(clave primaria, si existe)" }, ...allColumns.map((c) => ({ value: c, label: c }))]}
+            />
             <label className="checkbox-mini filter-desc-label">
               <input type="checkbox" checked={draft.sortDesc} onChange={(e) => setDraftField("sortDesc", e.target.checked)} />
               desc
@@ -473,7 +457,11 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
       </form>
 
       <div className="data-view">
-        {error && <div className="alert alert-error">{error}</div>}
+        {error && (
+          <div className="alert alert-error" role="alert">
+            {error}
+          </div>
+        )}
         <ResultLimitNotice result={result} />
         {selectedRows.length > 0 && !readOnly && (
           <div className="batch-toolbar">
@@ -685,22 +673,19 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
             >
               Siguiente ▶
             </button>
-            <select
-              value={applied.limit}
-              aria-label="Filas por página"
-              onChange={(e) => {
-                const limit = Number(e.target.value);
+            <Select
+              value={String(applied.limit)}
+              label="Filas por página"
+              onChange={(value) => {
+                const limit = Number(value);
                 setDraftField("limit", limit);
                 setApplied((a) => ({ ...a, limit }));
                 resetPagination();
               }}
-            >
-              {[25, 50, 100, 500].map((n) => (
-                <option key={n} value={n}>
-                  {n} filas
-                </option>
-              ))}
-            </select>
+              options={[...new Set([25, 50, 100, 500, applied.limit])]
+                .sort((a, b) => a - b)
+                .map((n) => ({ value: String(n), label: `${n} filas` }))}
+            />
           </div>
         </div>
       </div>
