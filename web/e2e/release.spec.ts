@@ -1,11 +1,12 @@
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { acceptanceTests } from "./acceptance";
+import { connectionUXTests } from "./connections";
 
 test("setup → conexión → tabla → editar → insertar → modificar → SQL → exportar", async ({ page }, testInfo) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Bienvenido a DByson" })).toBeVisible();
-  await expect.poll(() => page.locator(".brand-logo").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect.poll(() => page.locator(".brand-logo:visible").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
   await page.screenshot({ path: testInfo.outputPath("logo-login.png"), fullPage: true });
   await page.getByLabel("Usuario", { exact: true }).fill("e2e-admin");
   await page.getByLabel(/^Contraseña/).fill("e2e-Administrator-2026!");
@@ -79,3 +80,4 @@ test("setup → conexión → tabla → editar → insertar → modificar → SQ
 });
 
 acceptanceTests();
+connectionUXTests();

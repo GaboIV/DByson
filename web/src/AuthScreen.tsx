@@ -108,6 +108,9 @@ export function AuthScreen({ mode, needsToken, onSession }: Props) {
         </ul>
       </aside>
       <form className="card auth" onSubmit={submit}>
+        <div className="auth-mobile-brand">
+          <Brand />
+        </div>
         <h1>{mode === "setup" ? "Bienvenido a DByson" : "Entra a DByson"}</h1>
 
         <p className="muted">{mode === "setup" ? "Crea la cuenta de administrador para empezar." : "Inicia sesión para continuar."}</p>

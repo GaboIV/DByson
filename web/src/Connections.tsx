@@ -94,9 +94,18 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false 
     <section className="connections-home">
       <div className="home-intro">
         <div>
-          <p className="eyebrow">TU ESPACIO DE DATOS</p>
           <h1>Conexiones</h1>
-          <p className="muted">Abre tus bases, conserva tus consultas y encuentra el próximo destino.</p>
+          <div className="home-metrics" aria-label="Resumen de conexiones">
+            <span>
+              <strong>{items?.length || 0}</strong> {items?.length === 1 ? "conexión" : "conexiones"}
+            </span>
+            <span>
+              <strong>{items?.filter((c) => c.ssh?.enabled).length || 0}</strong> con SSH
+            </span>
+            <span>
+              <strong>{items?.filter((c) => c.readOnly).length || 0}</strong> de solo lectura
+            </span>
+          </div>
         </div>
         <div className="actions">
           <button onClick={() => setTransfer("import")}>↑ Importar perfiles</button>
@@ -104,18 +113,6 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false 
             ＋ Nueva conexión
           </button>
         </div>
-      </div>
-      <div className="home-metrics">
-        <span>
-          <strong>{items?.length || 0}</strong> {items?.length === 1 ? "conexión" : "conexiones"}
-        </span>
-        <span>
-          <strong>{items?.filter((c) => c.ssh?.enabled).length || 0}</strong> con túnel SSH
-        </span>
-        <span>
-          <strong>{items?.filter((c) => c.readOnly).length || 0}</strong> de solo lectura
-        </span>
-        <small className="muted">Ctrl + K · Buscar y abrir</small>
       </div>
       <div className="connections-toolbar">
         <label className="connection-search">

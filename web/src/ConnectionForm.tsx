@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useClipboard } from "./clipboard";
+import { Dialog } from "./Dialog";
 import {
   api,
   emptyHop,
@@ -34,48 +35,16 @@ function HopEditor({
   value,
   onChange,
   title,
-  jump,
-  connectionId,
+  onVerify,
 }: {
   value: SSHHop;
   onChange: (h: SSHHop) => void;
   title: string;
-  jump?: SSHHop;
-  connectionId?: string;
+  onVerify: () => void;
 }) {
-  const [observation, setObservation] = useState<{ fingerprint: string; algorithm: string } | null>(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const request = useRef<AbortController | null>(null);
-  useEffect(() => {
-    setObservation(null);
-    request.current?.abort();
-    setBusy(false);
-  }, [value.host, value.port, jump?.host, jump?.port]);
-  useEffect(() => () => request.current?.abort(), []);
   function update(p: Partial<SSHHop>) {
     onChange({ ...value, ...p, ...(p.host !== undefined || p.port !== undefined ? { fingerprint: "" } : {}) });
-  }
-  async function observe() {
-    request.current?.abort();
-    const controller = new AbortController();
-    request.current = controller;
-    setBusy(true);
-    setError("");
-    setObservation(null);
-    try {
-      const r = await api<{ fingerprint: string; algorithm: string }>(
-        "POST",
-        connectionId ? `/api/connections/${connectionId}/ssh/fingerprint` : "/api/ssh/fingerprint",
-        { host: value.host, port: value.port, user: value.user, ...(jump ? { jump } : {}) },
-        { signal: controller.signal },
-      );
-      if (!controller.signal.aborted) setObservation(r);
-    } catch (e) {
-      if (!controller.signal.aborted) setError(message(e));
-    } finally {
-      if (!controller.signal.aborted) setBusy(false);
-    }
   }
   async function attach(file?: File) {
     if (!file) return;
@@ -93,7 +62,7 @@ function HopEditor({
   return (
     <section className="ssh-hop">
       <h3>{title}</h3>
-      <div className="form-columns">
+      <div className="form-columns ssh-address">
         <label>
           Host SSH
           <input value={value.host} onChange={(e) => update({ host: e.target.value })} placeholder="ssh.ejemplo.com" required />
@@ -107,7 +76,7 @@ function HopEditor({
           <input value={value.user} onChange={(e) => update({ user: e.target.value })} required autoComplete="off" />
         </label>
       </div>
-      <label>
+      <label className="ssh-auth">
         Autenticación
         <select value={value.auth} onChange={(e) => update({ auth: e.target.value as SSHHop["auth"] })}>
           <option value="key">Clave privada · OpenSSH / PPK</option>
@@ -147,7 +116,7 @@ function HopEditor({
               placeholder="Si la clave está cifrada"
             />
           </label>
-          <details>
+          <details className="ssh-advanced">
             <summary>Usar un archivo montado en el servidor</summary>
             <label>
               Ruta dentro del directorio de claves
@@ -170,35 +139,29 @@ function HopEditor({
       <div className="host-verification">
         <div className="section-heading">
           <strong>Identidad del servidor</strong>
-          <button type="button" onClick={() => void observe()} disabled={busy || !value.host}>
-            {busy ? "Leyendo huella…" : "Obtener huella"}
-          </button>
-        </div>
-        <label>
-          Huella de confianza
-          <input
-            className="mono"
-            value={value.fingerprint}
-            onChange={(e) => update({ fingerprint: e.target.value })}
-            placeholder="SHA256:…"
-          />
-        </label>
-        {observation && (
-          <div className="fingerprint-observation">
-            <span>{observation.algorithm}</span>
-            <code>{observation.fingerprint}</code>
-            <p>Contrasta esta huella con el administrador del servidor antes de aceptarla.</p>
-            <button
-              type="button"
-              onClick={() => {
-                update({ fingerprint: observation.fingerprint });
-                setObservation(null);
-              }}
-            >
-              Confiar en esta huella
+          {value.fingerprint && (
+            <button type="button" onClick={onVerify}>
+              Revisar identidad
             </button>
-          </div>
+          )}
+        </div>
+        {value.fingerprint ? (
+          <code className="trusted-fingerprint">{value.fingerprint}</code>
+        ) : (
+          <small className="muted">Al continuar te pediremos confirmar la huella de este servidor.</small>
         )}
+        <details>
+          <summary>Introducir una huella conocida</summary>
+          <label>
+            Huella de confianza
+            <input
+              className="mono"
+              value={value.fingerprint}
+              onChange={(e) => update({ fingerprint: e.target.value })}
+              placeholder="SHA256:…"
+            />
+          </label>
+        </details>
         {value.fingerprint && <small className="okmsg">Huella fijada. Un cambio bloqueará la conexión.</small>}
       </div>
       {error && (
@@ -208,6 +171,15 @@ function HopEditor({
       )}
     </section>
   );
+}
+
+interface SSHTrust {
+  title: string;
+  host: string;
+  port: number;
+  previous: string;
+  observation?: { fingerprint: string; algorithm: string };
+  error?: string;
 }
 
 export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) {
@@ -229,9 +201,22 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
   const [test, setTest] = useState<TestResponse | null>(null);
   const [busy, setBusy] = useState("");
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
+  const [trust, setTrust] = useState<SSHTrust | null>(null);
+  const trustChoice = useRef<((accepted: boolean) => void) | null>(null);
   const request = useRef<AbortController | null>(null);
   const dirty = useRef(false);
-  useEffect(() => () => request.current?.abort(), []);
+  const form = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const container = form.current?.closest(".home-content");
+    if (container) container.scrollTop = 0;
+  }, [step]);
+  useEffect(
+    () => () => {
+      request.current?.abort();
+      trustChoice.current?.(false);
+    },
+    [],
+  );
   function update(p: Partial<ConnectionInput>) {
     dirty.current = true;
     setDraft((d) => ({ ...d, ...p }));
@@ -242,10 +227,78 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
   function setSSH(p: Partial<SSHConfig>) {
     update({ ssh: { ...ssh, ...p } });
   }
-  function payload() {
-    const p = { ...draft };
+  function payload(value = draft) {
+    const p = { ...value };
     for (const k of ["password", "caCert", "clientCert", "clientKey"] as const) if (!p[k]) delete p[k];
     return p;
+  }
+  function closeTrust(accepted = false) {
+    if (!accepted) request.current?.abort();
+    trustChoice.current?.(accepted);
+    trustChoice.current = null;
+    setTrust(null);
+  }
+  // Resolve each missing identity in route order, keeping the accepted bastion
+  // in the draft sent to the destination lookup and to the subsequent test/save.
+  async function verifySSH(force?: "jump" | "server"): Promise<ConnectionInput | null> {
+    if (!ssh.enabled) return draft;
+    const config = { ...ssh, jump: ssh.jump ? { ...ssh.jump } : undefined };
+    for (const target of ["jump", "server"] as const) {
+      const hop = target === "jump" ? config.jump : config;
+      if (!hop || (hop.fingerprint && force !== target)) continue;
+      if (!hop.host || !hop.user || !Number.isInteger(hop.port) || hop.port < 1 || hop.port > 65535) {
+        setStep(1);
+        setError(`Completa host, puerto y usuario de ${target === "jump" ? "bastión" : "SSH"} antes de continuar.`);
+        return null;
+      }
+      const controller = new AbortController();
+      request.current = controller;
+      const identity: SSHTrust = {
+        title: target === "jump" ? "Verificar bastión SSH" : "Verificar servidor SSH",
+        host: hop.host,
+        port: hop.port,
+        previous: hop.fingerprint,
+      };
+      setTrust(identity);
+      const choice = new Promise<boolean>((resolve) => {
+        trustChoice.current = resolve;
+      });
+      try {
+        const observation = await api<{ fingerprint: string; algorithm: string }>(
+          "POST",
+          existing ? `/api/connections/${existing.id}/ssh/fingerprint` : "/api/ssh/fingerprint",
+          {
+            host: hop.host,
+            port: hop.port,
+            user: hop.user,
+            ...(target === "server" && config.jump ? { jump: config.jump } : {}),
+          },
+          { signal: controller.signal },
+        );
+        if (controller.signal.aborted) return null;
+        setTrust({ ...identity, observation });
+        if (!(await choice)) return null;
+        hop.fingerprint = observation.fingerprint;
+        update({ ssh: { ...config, jump: config.jump ? { ...config.jump } : undefined } });
+      } catch (e) {
+        if (controller.signal.aborted) return null;
+        setTrust({ ...identity, error: message(e) });
+        await choice;
+        return null;
+      }
+    }
+    return { ...draft, ssh: config };
+  }
+  async function navigate(next: number, force?: "jump" | "server") {
+    if (busy) return;
+    setError("");
+    setBusy("verify");
+    try {
+      if ((next > 1 || force) && !(await verifySSH(force))) return;
+      setStep(next);
+    } finally {
+      setBusy("");
+    }
   }
   async function discover(current = false) {
     request.current?.abort();
@@ -266,6 +319,13 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
     }
   }
   async function runTest() {
+    if (busy) return;
+    setBusy("verify");
+    const verified = await verifySSH();
+    if (!verified) {
+      setBusy("");
+      return;
+    }
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
@@ -274,9 +334,14 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
     setTest(null);
     try {
       setTest(
-        await api<TestResponse>("POST", existing ? `/api/connections/${existing.id}/test-draft` : "/api/connections/test", payload(), {
-          signal: controller.signal,
-        }),
+        await api<TestResponse>(
+          "POST",
+          existing ? `/api/connections/${existing.id}/test-draft` : "/api/connections/test",
+          payload(verified),
+          {
+            signal: controller.signal,
+          },
+        ),
       );
     } catch (e) {
       if (!controller.signal.aborted) setError(message(e));
@@ -286,15 +351,26 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
   }
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (busy) return;
     if (step < 3) {
-      setStep(step + 1);
+      await navigate(step + 1);
+      return;
+    }
+    setBusy("verify");
+    const verified = await verifySSH();
+    if (!verified) {
+      setBusy("");
       return;
     }
     setBusy("save");
     setError("");
     try {
       onSaved(
-        await api<Connection>(existing ? "PUT" : "POST", existing ? `/api/connections/${existing.id}` : "/api/connections", payload()),
+        await api<Connection>(
+          existing ? "PUT" : "POST",
+          existing ? `/api/connections/${existing.id}` : "/api/connections",
+          payload(verified),
+        ),
       );
       dirty.current = false;
     } catch (e) {
@@ -307,14 +383,14 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
     if (!dirty.current || window.confirm("¿Descartar los cambios de esta conexión?")) onCancel();
   }
   return (
-    <form className="connection-wizard card" onSubmit={submit}>
+    <form className="connection-wizard card" onSubmit={submit} ref={form}>
       <div className="section-heading">
         <div>
           <p className="eyebrow">CONEXIONES / {existing ? "EDITAR" : "NUEVA"}</p>
           <h2>{existing ? existing.name : "Conecta tu próxima base de datos"}</h2>
           <p className="muted">MySQL y MariaDB · directa, Docker o a través de SSH</p>
         </div>
-        <button type="button" onClick={cancel} aria-label="Cerrar formulario">
+        <button type="button" onClick={cancel} aria-label="Cerrar formulario" disabled={Boolean(busy)}>
           ✕
         </button>
       </div>
@@ -324,17 +400,15 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
             key={label}
             type="button"
             aria-current={step === i ? "step" : undefined}
-            onClick={() => {
-              setStep(i);
-              setError("");
-            }}
+            disabled={Boolean(busy)}
+            onClick={() => void navigate(i)}
           >
             <span>{i + 1}</span>
             {label}
           </button>
         ))}
       </nav>
-      <fieldset className="wizard-body" disabled={busy !== ""}>
+      <fieldset className={`wizard-body${step === 0 ? " destination-grid" : ""}`} disabled={busy !== ""}>
         {step === 0 && (
           <>
             <h3>¿Dónde están tus datos?</h3>
@@ -370,69 +444,72 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
                 <small>Destino visto desde el servidor remoto</small>
               </button>
             </div>
-            <div className="form-columns">
+            <div className="destination-fields">
+              <div className="form-columns destination-name">
+                <label>
+                  Nombre
+                  <input
+                    autoFocus
+                    value={draft.name}
+                    onChange={(e) => update({ name: e.target.value })}
+                    required
+                    maxLength={100}
+                    placeholder="Desarrollo · facturación"
+                  />
+                </label>
+                <label>
+                  Entorno
+                  <select value={draft.env} onChange={(e) => update({ env: e.target.value as Env })}>
+                    {["local", "dev", "staging", "prod"].map((e) => (
+                      <option key={e}>{e}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="form-columns destination-address">
+                <label>
+                  Host MySQL
+                  <input value={draft.host} onChange={(e) => update({ host: e.target.value })} required placeholder="db.ejemplo.com" />
+                </label>
+                <label>
+                  Puerto MySQL
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={draft.port}
+                    onChange={(e) => update({ port: Number(e.target.value) })}
+                    required
+                  />
+                </label>
+              </div>
+              <div className="form-columns">
+                <label>
+                  Usuario MySQL
+                  <input value={draft.username} onChange={(e) => update({ username: e.target.value })} required autoComplete="off" />
+                </label>
+                <label>
+                  Contraseña MySQL
+                  <input
+                    type="password"
+                    value={draft.password || ""}
+                    onChange={(e) => update({ password: e.target.value })}
+                    autoComplete="new-password"
+                    placeholder={existing?.hasPassword ? "Guardada; deja vacío para conservarla" : ""}
+                  />
+                </label>
+              </div>
               <label>
-                Nombre
+                Base de datos inicial
                 <input
-                  autoFocus
-                  value={draft.name}
-                  onChange={(e) => update({ name: e.target.value })}
-                  required
-                  maxLength={100}
-                  placeholder="Desarrollo · facturación"
+                  value={draft.database}
+                  onChange={(e) => update({ database: e.target.value })}
+                  placeholder="Opcional: podrás elegirla al conectar"
                 />
               </label>
-              <label>
-                Entorno
-                <select value={draft.env} onChange={(e) => update({ env: e.target.value as Env })}>
-                  {["local", "dev", "staging", "prod"].map((e) => (
-                    <option key={e}>{e}</option>
-                  ))}
-                </select>
-              </label>
             </div>
-            <div className="form-columns">
-              <label>
-                Host MySQL
-                <input value={draft.host} onChange={(e) => update({ host: e.target.value })} required placeholder="db.ejemplo.com" />
-              </label>
-              <label>
-                Puerto MySQL
-                <input
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={draft.port}
-                  onChange={(e) => update({ port: Number(e.target.value) })}
-                  required
-                />
-              </label>
-            </div>
-            <div className="form-columns">
-              <label>
-                Usuario MySQL
-                <input value={draft.username} onChange={(e) => update({ username: e.target.value })} required autoComplete="off" />
-              </label>
-              <label>
-                Contraseña MySQL
-                <input
-                  type="password"
-                  value={draft.password || ""}
-                  onChange={(e) => update({ password: e.target.value })}
-                  autoComplete="new-password"
-                  placeholder={existing?.hasPassword ? "Guardada; deja vacío para conservarla" : ""}
-                />
-              </label>
-            </div>
-            <label>
-              Base de datos inicial
-              <input
-                value={draft.database}
-                onChange={(e) => update({ database: e.target.value })}
-                placeholder="Opcional: podrás elegirla al conectar"
-              />
-            </label>
-            <div className="discovery-panel">
+            <details className="discovery-panel" open={discovery ? true : undefined}>
+              <summary>Encontrar MySQL / MariaDB en tu red</summary>
               <div className="section-heading">
                 <div>
                   <strong>Encontrar MySQL / MariaDB</strong>
@@ -490,16 +567,28 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
                   </details>
                 </>
               )}
-            </div>
+            </details>
           </>
         )}
         {step === 1 && (
           <>
             <h3>Elige la ruta de conexión</h3>
-            <label className="check">
-              <input type="checkbox" checked={ssh.enabled} onChange={(e) => setSSH({ enabled: e.target.checked })} />
-              Conectar a través de un túnel SSH
-            </label>
+            <div className="route-options">
+              <label className="check">
+                <input type="checkbox" checked={ssh.enabled} onChange={(e) => setSSH({ enabled: e.target.checked })} />
+                Conectar a través de un túnel SSH
+              </label>
+              {ssh.enabled && (
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(ssh.jump)}
+                    onChange={(e) => setSSH({ jump: e.target.checked ? emptyHop() : undefined })}
+                  />
+                  Pasar primero por un bastión (ProxyJump)
+                </label>
+              )}
+            </div>
             {!ssh.enabled ? (
               <div className="route-preview">
                 <strong>
@@ -514,24 +603,22 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
                   {ssh.host || "SSH"} → {draft.host || "MySQL"}:{draft.port}
                   <p className="muted">El host MySQL se resuelve desde el servidor SSH. Para MySQL en ese servidor, usa 127.0.0.1.</p>
                 </div>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(ssh.jump)}
-                    onChange={(e) => setSSH({ jump: e.target.checked ? emptyHop() : undefined })}
+                <div className="ssh-hops">
+                  {ssh.jump && (
+                    <HopEditor
+                      title="1. Bastión"
+                      value={ssh.jump}
+                      onChange={(jump) => setSSH({ jump })}
+                      onVerify={() => void navigate(1, "jump")}
+                    />
+                  )}
+                  <HopEditor
+                    title={ssh.jump ? "2. Servidor SSH de destino" : "Servidor SSH"}
+                    value={ssh}
+                    onChange={(hop) => setSSH(hop)}
+                    onVerify={() => void navigate(1, "server")}
                   />
-                  Pasar primero por un bastión (ProxyJump)
-                </label>
-                {ssh.jump && (
-                  <HopEditor title="1. Bastión" value={ssh.jump} onChange={(jump) => setSSH({ jump })} connectionId={existing?.id} />
-                )}
-                <HopEditor
-                  title={ssh.jump ? "2. Servidor SSH de destino" : "Servidor SSH"}
-                  value={ssh}
-                  onChange={(hop) => setSSH(hop)}
-                  jump={ssh.jump}
-                  connectionId={existing?.id}
-                />
+                </div>
               </>
             )}
           </>
@@ -559,21 +646,23 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
               <p className="warn">Se cifran los datos, pero no se verifica la identidad del servidor MySQL.</p>
             )}
             {draft.tlsMode !== "disabled" && (
-              <details>
+              <details className="tls-certificates">
                 <summary>Certificados MySQL</summary>
-                {(
-                  [
-                    ["caCert", "Certificado CA (PEM)", existing?.hasCaCert],
-                    ["clientCert", "Certificado de cliente (PEM)", existing?.hasClientCert],
-                    ["clientKey", "Clave privada TLS (PEM)", existing?.hasClientCert],
-                  ] as const
-                ).map(([k, label, saved]) => (
-                  <label key={k}>
-                    {label}
-                    {saved && <small>Guardado</small>}
-                    <textarea value={draft[k] || ""} onChange={(e) => update({ [k]: e.target.value })} rows={4} spellCheck={false} />
-                  </label>
-                ))}
+                <div className="form-columns">
+                  {(
+                    [
+                      ["caCert", "Certificado CA (PEM)", existing?.hasCaCert],
+                      ["clientCert", "Certificado de cliente (PEM)", existing?.hasClientCert],
+                      ["clientKey", "Clave privada TLS (PEM)", existing?.hasClientCert],
+                    ] as const
+                  ).map(([k, label, saved]) => (
+                    <label key={k}>
+                      {label}
+                      {saved && <small>Guardado</small>}
+                      <textarea value={draft[k] || ""} onChange={(e) => update({ [k]: e.target.value })} rows={4} spellCheck={false} />
+                    </label>
+                  ))}
+                </div>
               </details>
             )}
             <label className="check">
@@ -626,7 +715,13 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
       </fieldset>
       {busy && (
         <p className="muted" role="status">
-          {busy === "discovery" ? "Buscando servicios…" : busy === "test" ? "Comprobando la ruta y MySQL…" : "Guardando conexión…"}
+          {busy === "verify"
+            ? "Verificando la identidad SSH…"
+            : busy === "discovery"
+              ? "Buscando servicios…"
+              : busy === "test"
+                ? "Comprobando la ruta y MySQL…"
+                : "Guardando conexión…"}
         </p>
       )}
       {error && (
@@ -635,7 +730,7 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
         </p>
       )}
       <div className="wizard-footer">
-        <button type="button" onClick={cancel}>
+        <button type="button" onClick={cancel} disabled={Boolean(busy)}>
           Cancelar
         </button>
         <span className="spacer" />
@@ -649,6 +744,42 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
         </button>
       </div>
       {copyNotice}
+      {trust && (
+        <Dialog title={trust.title} onClose={() => closeTrust()} className="ssh-trust-dialog">
+          <p className="trust-destination mono">
+            {trust.host}:{trust.port}
+          </p>
+          {trust.error ? (
+            <p className="error" role="alert">
+              {trust.error}
+            </p>
+          ) : trust.observation ? (
+            <>
+              <p>Comprueba esta huella con el administrador del servidor antes de confiar.</p>
+              <div className="fingerprint-observation">
+                <span className="muted">{trust.observation.algorithm}</span>
+                <code>{trust.observation.fingerprint}</code>
+              </div>
+              {trust.previous && trust.previous !== trust.observation.fingerprint && (
+                <p className="warn">La huella ha cambiado. Acepta únicamente si confirmaste el cambio con el administrador.</p>
+              )}
+              <p className="muted">La huella quedará fijada en este perfil. Si cambia, DByson bloqueará la conexión.</p>
+            </>
+          ) : (
+            <p role="status">Consultando la identidad del servidor…</p>
+          )}
+          <div className="actions trust-actions">
+            <button type="button" onClick={() => closeTrust()}>
+              Cancelar
+            </button>
+            {!trust.error && (
+              <button type="button" className="primary" disabled={!trust.observation} onClick={() => closeTrust(true)}>
+                Confiar y continuar
+              </button>
+            )}
+          </div>
+        </Dialog>
+      )}
     </form>
   );
 }
