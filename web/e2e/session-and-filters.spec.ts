@@ -251,6 +251,49 @@ test("Filtros múltiples: agrega hasta 3 líneas en panel flotante sin aumentar 
   await expect(page.getByRole("button", { name: "+3", exact: true })).toBeVisible();
 });
 
+test("Vista y controles: padding del overview, logo alineado, números anchos y rayado en acciones", async ({ page }) => {
+  await fixture(page);
+
+  for (const name of ["Límite de filas", "Longitud de texto"]) {
+    const box = await page.getByLabel(name, { exact: true }).boundingBox();
+    expect(box!.width).toBeGreaterThanOrEqual(50);
+  }
+
+  const stripe = await page.evaluate(() => {
+    document.documentElement.dataset.stripes = "true";
+    const tbody = document.querySelector(".data-view .data-table tbody")!;
+    tbody.append(tbody.querySelector("tr")!.cloneNode(true));
+    const rows = [...tbody.querySelectorAll("tr")];
+    const background = (row: HTMLTableRowElement, index: number) =>
+      getComputedStyle(row.querySelectorAll("td")[index]).backgroundColor;
+    return {
+      oddAction: background(rows[0], 1),
+      evenAction: background(rows[1], 1),
+      evenCell: background(rows[1], 2),
+    };
+  });
+  expect(stripe.evenAction).not.toBe(stripe.oddAction);
+  expect(stripe.evenAction).toBe(stripe.evenCell);
+
+  await page.getByRole("tab", { name: "Conexiones", exact: true }).click();
+  await page.getByRole("button", { name: /^Conexión QA/ }).click();
+  const overview = page.locator(".db-overview:visible");
+  await expect(overview).toBeVisible();
+  expect(await overview.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("4px");
+
+  const parity = await page.evaluate(() => {
+    const style = (selector: string) => getComputedStyle(document.querySelector(selector)!);
+    return {
+      homeFont: style("#panel-home .brand").fontSize,
+      wsFont: style(".workbench-panel:not([hidden]) .ws-topbar .brand").fontSize,
+      homePad: style("#panel-home .topbar").paddingLeft,
+      wsPad: style(".workbench-panel:not([hidden]) .ws-topbar").paddingLeft,
+    };
+  });
+  expect(parity.wsFont).toBe(parity.homeFont);
+  expect(parity.wsPad).toBe(parity.homePad);
+});
+
 test("Sesión vencida: salir del espacio, mostrar aviso y volver a autenticar sin bucle", async ({ page }, info) => {
   const state = await fixture(page);
   state.expired = true;

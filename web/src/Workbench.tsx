@@ -98,6 +98,19 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
     }
   }, [active, storageKey]);
 
+  useEffect(
+    () => () => {
+      // Leaving the app (logout or expired session) forgets the active tab: signing back in
+      // always lands on Conexiones, while a plain reload keeps the tab. Open tabs are kept.
+      try {
+        localStorage.removeItem(storageKey + ":active");
+      } catch {
+        /* storage unavailable: nothing to forget */
+      }
+    },
+    [storageKey],
+  );
+
   const groups = [...new Map(tabs.map((t) => [t.groupId, tabs.find((p) => p.groupId === t.groupId)!])).values()];
   const current = tabs.find((t) => t.id === active);
   const currentConnection = connections.find((c) => c.id === current?.connectionId);
