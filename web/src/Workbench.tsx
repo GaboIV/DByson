@@ -8,9 +8,10 @@ import { Connections } from "./Connections";
 import { Dialog } from "./Dialog";
 import { useConfirm } from "./Confirm";
 import { PreferencesDialog, QueryHistoryDialog, usePreferences } from "./Preferences";
-import { AuditDialog, SecurityDialog } from "./Security";
+import { AuditDialog, SecurityDialog, TeamDialog } from "./Security";
 import { TabStrip, type TabItem } from "./TabStrip";
 import { Workspace, type WorkspaceView } from "./Workspace";
+import { MAX_GROUPS, MAX_TABS, restoreActiveTab, restoreTabs, scope, type WorkTab } from "./workTabs";
 import { pickSqlFile } from "./workspace/sqlFile";
 
 const VIEW_LABELS: Partial<Record<WorkspaceView, string>> = {
@@ -21,59 +22,9 @@ const VIEW_LABELS: Partial<Record<WorkspaceView, string>> = {
   sql: "Consulta SQL",
   export: "Exportar",
 };
-const VIEWS: WorkspaceView[] = ["browse", "data", "structure", "modify", "insert", "sql", "export"];
-const MAX_TABS = 48;
-const MAX_GROUPS = 16;
-
-interface WorkTab {
-  id: string;
-  connectionId: string;
-  database: string;
-  table: string;
-  sql: boolean;
-  view: WorkspaceView;
-  title: string;
-  /** Name the user gave a query tab. */
-  customTitle?: string;
-  dirty?: boolean;
-  groupId: string;
-  groupTable: string;
-  groupDatabase: string;
-}
-
-function scope(connectionId: string, db: string, table: string) {
-  return `table:${connectionId}:${encodeURIComponent(db)}:${encodeURIComponent(table)}`;
-}
-
 function restore(key: string): WorkTab[] {
   try {
-    const values = JSON.parse(localStorage.getItem(key) || "[]");
-    if (!Array.isArray(values)) return [];
-    return values
-      .filter(
-        (t) =>
-          t &&
-          typeof t.id === "string" &&
-          typeof t.connectionId === "string" &&
-          typeof t.database === "string" &&
-          typeof t.table === "string" &&
-          typeof t.sql === "boolean",
-      )
-      .slice(0, MAX_TABS)
-      .map((t) => {
-        const view: WorkspaceView = VIEWS.includes(t.view) ? t.view : t.sql ? "sql" : t.table ? "data" : "browse";
-        const groupTable = typeof t.groupTable === "string" ? t.groupTable : t.table;
-        const groupDatabase = typeof t.groupDatabase === "string" ? t.groupDatabase : t.database;
-        return {
-          ...t,
-          view,
-          dirty: false,
-          customTitle: typeof t.customTitle === "string" ? t.customTitle.slice(0, 60) : undefined,
-          groupTable,
-          groupDatabase,
-          groupId: groupTable ? scope(t.connectionId, groupDatabase, groupTable) : t.id,
-        };
-      });
+    return restoreTabs(localStorage.getItem(key));
   } catch {
     return [];
   }
@@ -84,8 +35,14 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
   const { preferences } = usePreferences();
   const storageKey = `dbyson:${session.username}`;
   const [tabs, setTabs] = useState<WorkTab[]>(() => restore(storageKey + ":tabs"));
-  const [active, setActive] = useState("home");
-  const [visited, setVisited] = useState<string[]>([]);
+  const [active, setActive] = useState(() => {
+    try {
+      return restoreActiveTab(localStorage.getItem(storageKey + ":active"), tabs);
+    } catch {
+      return "home";
+    }
+  });
+  const [visited, setVisited] = useState<string[]>(() => (active === "home" ? [] : [active]));
   const [connections, setConnections] = useState<Connection[]>([]);
   const [palette, setPalette] = useState(false);
   const [search, setSearch] = useState("");
@@ -95,6 +52,7 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
   const [history, setHistory] = useState(false);
   const [security, setSecurity] = useState(false);
   const [audit, setAudit] = useState(false);
+  const [team, setTeam] = useState(false);
   const [mfa, setMfa] = useState(session.mfa);
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const seeds = useRef<Record<string, string>>({});
@@ -113,9 +71,14 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
       if (!signal?.aborted) setError(e instanceof Error ? e.message : "No se pudieron cargar las conexiones");
     }
   }, []);
+  const didInitialLoad = useRef(false);
   useEffect(() => {
     const c = new AbortController();
-    if (active === "home" || palette) void refresh(c.signal);
+    // The restored tab needs its connection on the first mount; later loads only refresh from home or the palette.
+    if (!didInitialLoad.current || active === "home" || palette) {
+      didInitialLoad.current = true;
+      void refresh(c.signal);
+    }
     return () => c.abort();
   }, [active, palette, refresh]);
 
@@ -126,6 +89,14 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
       /* storage unavailable: tabs simply won't be restored */
     }
   }, [tabs, storageKey]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey + ":active", active);
+    } catch {
+      /* storage unavailable: the active tab simply won't be restored */
+    }
+  }, [active, storageKey]);
 
   const groups = [...new Map(tabs.map((t) => [t.groupId, tabs.find((p) => p.groupId === t.groupId)!])).values()];
   const current = tabs.find((t) => t.id === active);
@@ -396,6 +367,7 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
           <span className="spacer" />
           <span className="muted">{session.username}</span>
           <button onClick={() => setAudit(true)}>Auditoría</button>
+          {session.role === "admin" && <button onClick={() => setTeam(true)}>Equipo</button>}
           <button onClick={() => setSecurity(true)}>
             Seguridad
             {showMfaHint && (
@@ -419,7 +391,13 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
           </div>
         )}
         <main className="content home-content">
-          <Connections key={newConnection} storageKey={storageKey} startNew={newConnection > 0} onSelect={(c) => open(c)} />
+          <Connections
+            key={newConnection}
+            storageKey={storageKey}
+            startNew={newConnection > 0}
+            isAdmin={session.role === "admin"}
+            onSelect={(c) => open(c)}
+          />
         </main>
       </div>
 
@@ -503,6 +481,7 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
         />
       )}
       {audit && <AuditDialog connections={connections} onClose={() => setAudit(false)} />}
+      {team && <TeamDialog onClose={() => setTeam(false)} />}
       {settings && (
         <PreferencesDialog
           onClose={() => setSettings(false)}

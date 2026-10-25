@@ -30,6 +30,7 @@ type connInput struct {
 	Database   string         `json:"database"`
 	TLSMode    string         `json:"tlsMode"`
 	ReadOnly   bool           `json:"readOnly"`
+	Shared     *bool          `json:"shared,omitempty"`
 	Password   *string        `json:"password"`
 	CACert     *string        `json:"caCert"`
 	ClientCert *string        `json:"clientCert"`
@@ -56,6 +57,7 @@ type connRecord struct {
 	Database  string
 	TLSMode   string
 	ReadOnly  bool
+	Shared    int
 	Wrapped   []byte
 	Sealed    []byte
 	CreatedAt int64
@@ -73,6 +75,8 @@ type connView struct {
 	Database      string        `json:"database"`
 	TLSMode       string        `json:"tlsMode"`
 	ReadOnly      bool          `json:"readOnly"`
+	Shared        bool          `json:"shared"`
+	OwnerID       int64         `json:"ownerId"`
 	HasPassword   bool          `json:"hasPassword"`
 	HasCACert     bool          `json:"hasCaCert"`
 	HasClientCert bool          `json:"hasClientCert"`
@@ -167,24 +171,26 @@ func view(rec *connRecord, sec secretBlob) connView {
 	return connView{
 		SSH: sec.SSH.Redacted(), ID: rec.ID, Name: rec.Name, Env: rec.Env, Host: rec.Host, Port: rec.Port,
 		Username: rec.Username, Database: rec.Database, TLSMode: rec.TLSMode, ReadOnly: rec.ReadOnly,
+		Shared: rec.Shared != 0, OwnerID: rec.OwnerID,
 		HasPassword: sec.Password != "", HasCACert: sec.CACert != "", HasClientCert: sec.ClientCert != "" && sec.ClientKey != "",
 		CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt,
 	}
 }
 
-const connColumns = `id, owner_id, name, env, host, port, username, dbname, tls_mode, read_only, wrapped_dek, secret, created_at, updated_at`
+const connColumns = `id, owner_id, name, env, host, port, username, dbname, tls_mode, read_only, shared, wrapped_dek, secret, created_at, updated_at`
 
 func scanConn(sc interface{ Scan(...any) error }) (*connRecord, error) {
 	var rec connRecord
 	var ro int
 	err := sc.Scan(&rec.ID, &rec.OwnerID, &rec.Name, &rec.Env, &rec.Host, &rec.Port, &rec.Username,
-		&rec.Database, &rec.TLSMode, &ro, &rec.Wrapped, &rec.Sealed, &rec.CreatedAt, &rec.UpdatedAt)
+		&rec.Database, &rec.TLSMode, &ro, &rec.Shared, &rec.Wrapped, &rec.Sealed, &rec.CreatedAt, &rec.UpdatedAt)
 	rec.ReadOnly = ro != 0
 	return &rec, err
 }
 
-// loadOwned fetches a connection only if it belongs to the session user, so IDs of other
-// users' connections are indistinguishable from nonexistent ones.
+// loadOwned keeps the old strict-owner behavior for callers that need it.
+// Most handlers use loadConnection (team.go), which also honours admin access
+// and grants on shared connections.
 func (s *Server) loadOwned(ctx context.Context, r *http.Request) (*connRecord, secretBlob, error) {
 	sess := sessionFrom(r)
 	rec, err := scanConn(s.Store.DB.QueryRowContext(ctx,
@@ -214,6 +220,10 @@ func (s *Server) sealSecret(id string, sec secretBlob) (wrapped, sealed []byte, 
 }
 
 func (s *Server) fail(w http.ResponseWriter, err error) {
+	if errors.Is(err, errViewerProd) {
+		writeError(w, http.StatusForbidden, errViewerProd.Error())
+		return
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "connection not found")
 		return
@@ -226,8 +236,19 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Store.DB.QueryContext(r.Context(),
-		`SELECT `+connColumns+` FROM connections WHERE owner_id = ? ORDER BY name COLLATE NOCASE`, sessionFrom(r).UserID)
+	sess := sessionFrom(r)
+	var rows *sql.Rows
+	var err error
+	if sess.Role == RoleAdmin {
+		rows, err = s.Store.DB.QueryContext(r.Context(),
+			`SELECT `+connColumns+` FROM connections ORDER BY name COLLATE NOCASE`)
+	} else {
+		rows, err = s.Store.DB.QueryContext(r.Context(),
+			`SELECT `+connColumns+` FROM connections
+			 WHERE owner_id = ? OR (shared <> 0 AND id IN
+			   (SELECT connection_id FROM connection_grants WHERE user_id = ?))
+			 ORDER BY name COLLATE NOCASE`, sess.UserID, sess.UserID)
+	}
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -255,17 +276,24 @@ func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getConnection(w http.ResponseWriter, r *http.Request) {
-	rec, sec, err := s.loadOwned(r.Context(), r)
+	rec, sec, err := s.loadConnection(r.Context(), r, GrantUse)
 	if err != nil {
-		s.fail(w, err)
+		s.failAccess(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, view(rec, sec))
 }
 
 func (s *Server) createConnection(w http.ResponseWriter, r *http.Request) {
+	if denyWritesForViewer(w, r) {
+		return
+	}
 	var in connInput
 	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.Shared != nil && *in.Shared && sessionFrom(r).Role != RoleAdmin {
+		writeError(w, http.StatusForbidden, "only admins can share connections")
 		return
 	}
 	if msg := in.validate(); msg != "" {
@@ -289,31 +317,51 @@ func (s *Server) createConnection(w http.ResponseWriter, r *http.Request) {
 	if in.ReadOnly {
 		ro = 1
 	}
+	sh := 0
+	if in.Shared != nil && *in.Shared {
+		sh = 1
+	}
 	_, err = s.Store.DB.ExecContext(r.Context(),
-		`INSERT INTO connections (`+connColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT INTO connections (`+connColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		id, sessionFrom(r).UserID, in.Name, in.Env, in.Host, in.Port, in.Username, in.Database,
-		in.TLSMode, ro, wrapped, sealed, now, now)
+		in.TLSMode, ro, sh, wrapped, sealed, now, now)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	rec := &connRecord{ID: id, Name: in.Name, Env: in.Env, Host: in.Host, Port: in.Port, Username: in.Username,
-		Database: in.Database, TLSMode: in.TLSMode, ReadOnly: in.ReadOnly, CreatedAt: now, UpdatedAt: now}
+		Database: in.Database, TLSMode: in.TLSMode, ReadOnly: in.ReadOnly, Shared: sh, CreatedAt: now, UpdatedAt: now}
 	writeJSON(w, http.StatusCreated, view(rec, sec))
 }
 
 func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request) {
+	if denyWritesForViewer(w, r) {
+		return
+	}
 	var in connInput
 	if !readJSON(w, r, &in) {
 		return
 	}
-	rec, current, err := s.loadOwned(r.Context(), r)
+	rec, current, err := s.loadConnection(r.Context(), r, GrantManage)
 	if err != nil {
-		s.fail(w, err)
+		s.failAccess(w, r, err)
 		return
 	}
 	if msg := in.validate(); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+	// Only admins change the shared flag: it controls who else can see the profile.
+	// A missing flag keeps the current value, so older clients never unshare by accident.
+	wantShared := rec.Shared
+	if in.Shared != nil {
+		wantShared = 0
+		if *in.Shared {
+			wantShared = 1
+		}
+	}
+	if wantShared != rec.Shared && sessionFrom(r).Role != RoleAdmin {
+		writeError(w, http.StatusForbidden, "only admins can share connections")
 		return
 	}
 	sec, msg := in.applySecrets(current)
@@ -333,21 +381,38 @@ func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = s.Store.DB.ExecContext(r.Context(),
 		`UPDATE connections SET name=?, env=?, host=?, port=?, username=?, dbname=?, tls_mode=?, read_only=?,
-		 wrapped_dek=?, secret=?, updated_at=? WHERE id=? AND owner_id=?`,
+		 shared=?, wrapped_dek=?, secret=?, updated_at=? WHERE id=?`,
 		in.Name, in.Env, in.Host, in.Port, in.Username, in.Database, in.TLSMode, ro,
-		wrapped, sealed, now, rec.ID, rec.OwnerID)
+		wantShared, wrapped, sealed, now, rec.ID)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
+	// Unsharing revokes every grant at once.
+	if wantShared == 0 && rec.Shared != 0 {
+		_, _ = s.Store.DB.ExecContext(r.Context(), `DELETE FROM connection_grants WHERE connection_id = ?`, rec.ID)
+	}
 	rec.Name, rec.Env, rec.Host, rec.Port, rec.Username, rec.Database = in.Name, in.Env, in.Host, in.Port, in.Username, in.Database
-	rec.TLSMode, rec.ReadOnly, rec.UpdatedAt = in.TLSMode, in.ReadOnly, now
+	rec.TLSMode, rec.ReadOnly, rec.Shared, rec.UpdatedAt = in.TLSMode, in.ReadOnly, wantShared, now
 	writeJSON(w, http.StatusOK, view(rec, sec))
 }
 
 func (s *Server) deleteConnection(w http.ResponseWriter, r *http.Request) {
-	res, err := s.Store.DB.ExecContext(r.Context(),
-		`DELETE FROM connections WHERE id = ? AND owner_id = ?`, r.PathValue("id"), sessionFrom(r).UserID)
+	if denyWritesForViewer(w, r) {
+		return
+	}
+	sess := sessionFrom(r)
+	rec, err := s.peekConnection(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	// Deleting removes the profile for everyone it is shared with: owners and admins only.
+	if sess.Role != RoleAdmin && rec.OwnerID != sess.UserID {
+		s.fail(w, sql.ErrNoRows)
+		return
+	}
+	res, err := s.Store.DB.ExecContext(r.Context(), `DELETE FROM connections WHERE id = ?`, rec.ID)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -378,12 +443,12 @@ func (s *Server) runTest(w http.ResponseWriter, r *http.Request, cfg mysql.Confi
 }
 
 func (s *Server) testSavedConnection(w http.ResponseWriter, r *http.Request) {
-	rec, sec, err := s.loadOwned(r.Context(), r)
+	rec, sec, err := s.loadConnection(r.Context(), r, GrantUse)
 	if err == nil {
 		err = s.mfaGate(r, rec.Env, sec.SSH.Enabled)
 	}
 	if err != nil {
-		s.fail(w, err)
+		s.failAccess(w, r, err)
 		return
 	}
 	in := connInput{Host: rec.Host, Port: rec.Port, Username: rec.Username, Database: rec.Database, TLSMode: rec.TLSMode, ReadOnly: rec.ReadOnly}
@@ -405,9 +470,9 @@ func (s *Server) testDraftConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	base := secretBlob{}
 	if r.PathValue("id") != "" {
-		_, stored, err := s.loadOwned(r.Context(), r)
+		_, stored, err := s.loadConnection(r.Context(), r, GrantUse)
 		if err != nil {
-			s.fail(w, err)
+			s.failAccess(w, r, err)
 			return
 		}
 		base = stored
@@ -446,9 +511,9 @@ func (s *Server) sshFingerprint(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if r.PathValue("id") != "" {
-		_, sec, err := s.loadOwned(ctx, r)
+		_, sec, err := s.loadConnection(ctx, r, GrantUse)
 		if err != nil {
-			s.fail(w, err)
+			s.failAccess(w, r, err)
 			return
 		}
 		merged := tunnel.Merge(tunnel.Config{Jump: in.Jump}, sec.SSH)

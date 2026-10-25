@@ -78,6 +78,8 @@ export function productivityTests() {
       await expect(lib.locator("article")).toContainText("Mi consulta persistente");
       await lib.getByRole("button", { name: "Cerrar", exact: true }).click();
       await page.reload();
+      // La recarga restaura la pestaña activa; se vuelve a Conexiones para seguir.
+      await page.getByRole("tab", { name: "Conexiones", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Conexiones", exact: true })).toBeVisible();
       await table(page, "items");
       await page.getByRole("button", { name: "⚡ SQL", exact: true }).click();

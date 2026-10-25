@@ -86,7 +86,7 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (*Session, error) {
 	var lastSeen, expires int64
 	err := s.DB.QueryRowContext(ctx, `
 		SELECT u.id, u.username, u.role, s.csrf, s.mfa, s.last_seen, s.expires_at, s.public_id, s.client_cert
-		FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ?`, h).
+		FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ? AND u.disabled = 0`, h).
 		Scan(&sess.UserID, &sess.Username, &sess.Role, &sess.CSRF, &sess.MFA, &lastSeen, &expires, &sess.ID, &sess.ClientCert)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoSession

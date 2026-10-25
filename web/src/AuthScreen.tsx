@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, ApiError, setCsrf, type LoginResponse, type Session } from "./api";
+import { api, ApiError, setCsrf, type LoginResponse, type OIDCStatus, type Session } from "./api";
 import { Brand } from "./Brand";
 import { loginPasskey, passkeysSupported } from "./passkeys";
 
@@ -19,12 +19,18 @@ export function AuthScreen({ mode, needsToken, onSession, notice }: Props) {
   const [mfaToken, setMfaToken] = useState("");
   const [code, setCode] = useState("");
   const [passkeys, setPasskeys] = useState(false);
+  const [sso, setSso] = useState<OIDCStatus | null>(null);
+  const ssoFailed = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("sso") === "error";
   useEffect(() => {
     const controller = new AbortController();
-    if (mode === "login")
+    if (mode === "login") {
       void api<{ enabled: boolean }>("GET", "/api/auth/passkeys/status", undefined, { signal: controller.signal })
         .then((r) => setPasskeys(r.enabled))
         .catch(() => {});
+      void api<OIDCStatus>("GET", "/api/auth/oidc/status", undefined, { signal: controller.signal })
+        .then((r) => setSso(r))
+        .catch(() => {});
+    }
     return () => controller.abort();
   }, [mode]);
 
@@ -161,6 +167,18 @@ export function AuthScreen({ mode, needsToken, onSession, notice }: Props) {
         <button className="primary" disabled={busy}>
           {mode === "setup" ? "Crear administrador" : "Entrar"}
         </button>
+        {mode === "login" && ssoFailed && (
+          <p className="error" role="alert">
+            {new URLSearchParams(window.location.search).get("reason") === "provisioned"
+              ? "Tu identidad es válida pero no tiene cuenta vinculada. Pide a una persona administradora que te dé acceso."
+              : "No se pudo entrar con SSO. Inténtalo de nuevo o usa tu usuario y contraseña."}
+          </p>
+        )}
+        {mode === "login" && sso?.enabled && (
+          <button type="button" disabled={busy} onClick={() => (window.location.href = "/api/auth/oidc/login")}>
+            Entrar con {sso.provider || "SSO"}
+          </button>
+        )}
         {mode === "login" && passkeys && passkeysSupported() && (
           <button
             type="button"

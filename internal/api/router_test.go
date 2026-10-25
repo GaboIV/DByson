@@ -20,6 +20,7 @@ type testEnv struct {
 	t       *testing.T
 	handler http.Handler
 	store   *store.Store
+	srv     *Server
 }
 
 func newTestEnv(t *testing.T) *testEnv { return newTestEnvWith(t, nil) }
@@ -40,7 +41,8 @@ func newTestEnvWith(t *testing.T, configure func(*Deps)) *testEnv {
 	if configure != nil {
 		configure(&deps)
 	}
-	return &testEnv{t: t, store: st, handler: NewRouter("test", assets, deps)}
+	srv := newServer("test", deps)
+	return &testEnv{t: t, store: st, srv: srv, handler: srv.routes(assets)}
 }
 
 type client struct {
@@ -317,7 +319,7 @@ func TestConnectionsAreIsolatedPerUser(t *testing.T) {
 	_ = json.Unmarshal(create.Body.Bytes(), &cv)
 
 	hash, _ := auth.HashPassword("second-user-password")
-	if _, err := e.store.DB.Exec(`INSERT INTO users (username, password_hash, role, created_at) VALUES ('bob', ?, 'admin', 0)`, hash); err != nil {
+	if _, err := e.store.DB.Exec(`INSERT INTO users (username, password_hash, role, created_at) VALUES ('bob', ?, 'member', 0)`, hash); err != nil {
 		t.Fatal(err)
 	}
 	bob := e.client()
@@ -335,6 +337,13 @@ func TestConnectionsAreIsolatedPerUser(t *testing.T) {
 	}
 	if rec := bob.do("GET", "/api/connections", nil); strings.Contains(rec.Body.String(), "mine") {
 		t.Fatalf("list leaked another user's connection: %s", rec.Body.String())
+	}
+	// Central administration: admins see every profile.
+	if _, err := e.store.DB.Exec(`UPDATE users SET role = 'admin' WHERE username = 'bob'`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := bob.do("GET", "/api/connections/"+cv.ID, nil); rec.Code != http.StatusOK {
+		t.Fatalf("admin must see every connection, got %d", rec.Code)
 	}
 }
 

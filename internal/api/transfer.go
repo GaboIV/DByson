@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -74,10 +75,38 @@ func (s *Server) exportProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	profiles := []connInput{}
+	sess := sessionFrom(r)
 	for _, id := range in.IDs {
-		rec, err := scanConn(s.Store.DB.QueryRowContext(r.Context(), `SELECT `+connColumns+` FROM connections WHERE id=? AND owner_id=?`, id, sessionFrom(r).UserID))
+		rec, err := s.peekConnection(r.Context(), id)
 		if err != nil {
 			s.fail(w, err)
+			return
+		}
+		// Exporting the profile needs use access; exporting its plaintext
+		// secrets needs manage access, like editing the profile.
+		need := GrantUse
+		if in.IncludeSecrets {
+			need = GrantManage
+		}
+		allowed := sess.Role == RoleAdmin || rec.OwnerID == sess.UserID
+		if !allowed {
+			if rec.Shared == 0 {
+				s.fail(w, sql.ErrNoRows)
+				return
+			}
+			level, gerr := s.grantLevel(r.Context(), rec.ID, sess.UserID)
+			if gerr != nil {
+				s.fail(w, gerr)
+				return
+			}
+			allowed = level == need || (need == GrantUse && level == GrantManage)
+		}
+		if !allowed {
+			s.fail(w, sql.ErrNoRows)
+			return
+		}
+		if sess.Role == RoleViewer && rec.Env == "prod" {
+			s.fail(w, errViewerProd)
 			return
 		}
 		sec, err := s.openSecret(rec)
@@ -142,6 +171,9 @@ func (s *Server) exportProfiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) importProfiles(w http.ResponseWriter, r *http.Request) {
+	if denyWritesForViewer(w, r) {
+		return
+	}
 	var in struct {
 		File       string `json:"file"`
 		Passphrase string `json:"passphrase"`
@@ -248,7 +280,8 @@ func (s *Server) importProfiles(w http.ResponseWriter, r *http.Request) {
 		if p.ReadOnly {
 			ro = 1
 		}
-		_, err = tx.ExecContext(r.Context(), `INSERT INTO connections (`+connColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, sessionFrom(r).UserID, p.Name+" (importada)", p.Env, p.Host, p.Port, p.Username, p.Database, p.TLSMode, ro, wrapped, sealed, now, now)
+		// Imports are always private: sharing is an explicit admin action afterwards.
+		_, err = tx.ExecContext(r.Context(), `INSERT INTO connections (`+connColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, sessionFrom(r).UserID, p.Name+" (importada)", p.Env, p.Host, p.Port, p.Username, p.Database, p.TLSMode, ro, 0, wrapped, sealed, now, now)
 		if err != nil {
 			s.fail(w, err)
 			return

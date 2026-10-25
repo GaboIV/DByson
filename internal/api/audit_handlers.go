@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gaboiv/dbyson/internal/audit"
 )
@@ -25,9 +26,20 @@ var actionNames = map[string]string{
 	"POST /api/auth/mfa/enable":                                             "auth.mfa.enable",
 	"POST /api/auth/mfa/disable":                                            "auth.mfa.disable",
 	"POST /api/auth/mfa/recovery-codes":                                     "auth.mfa.recovery_codes",
+	"GET /api/auth/oidc/login":                                              "auth.oidc.start",
+	"GET /api/auth/oidc/callback":                                           "auth.oidc.login",
+	"GET /api/audit/export":                                                 "audit.export",
+	"POST /api/audit/purge":                                                 "audit.purge",
 	"POST /api/connections":                                                 "connection.create",
 	"PUT /api/connections/{id}":                                             "connection.update",
 	"DELETE /api/connections/{id}":                                          "connection.delete",
+	"GET /api/connections/{id}/grants":                                      "connection.grants.list",
+	"POST /api/connections/{id}/grants":                                     "connection.grant.create",
+	"DELETE /api/connections/{id}/grants/{userID}":                          "connection.grant.delete",
+	"GET /api/users":                                                        "user.list",
+	"POST /api/users":                                                       "user.create",
+	"PUT /api/users/{id}":                                                   "user.update",
+	"DELETE /api/users/{id}":                                                "user.delete",
 	"POST /api/connections/test":                                            "connection.test",
 	"POST /api/connections/{id}/test":                                       "connection.test",
 	"POST /api/connections/{id}/test-draft":                                 "connection.test",
@@ -140,14 +152,25 @@ func (s *Server) recordFor(r *http.Request, action, target, detail, outcome stri
 	s.record(r.Context(), e)
 }
 
-func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
-	sess := sessionFrom(r)
-	q := r.URL.Query()
+func filterFromQuery(q interface {
+	Get(string) string
+}) audit.Filter {
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	before, _ := strconv.ParseInt(q.Get("before"), 10, 64)
-	f := audit.Filter{Limit: limit, BeforeID: before, Action: q.Get("action")}
+	since, _ := strconv.ParseInt(q.Get("since"), 10, 64)
+	until, _ := strconv.ParseInt(q.Get("until"), 10, 64)
+	return audit.Filter{
+		Limit: limit, BeforeID: before, Action: q.Get("action"),
+		Username: q.Get("username"), Outcome: q.Get("outcome"), Since: since, Until: until,
+	}
+}
+
+func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r)
+	f := filterFromQuery(r.URL.Query())
 	if sess.Role != "admin" {
 		f.UserID = sess.UserID // non-admins only see their own trail
+		f.Username = ""
 	}
 	entries, err := s.Audit.List(r.Context(), f)
 	if err != nil {
@@ -155,6 +178,72 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+}
+
+// exportAudit streams the trail as JSONL or CSV for ingestion by an external
+// system (SIEM, archive). Non-admins export only their own trail.
+func (s *Server) exportAudit(w http.ResponseWriter, r *http.Request) {
+	sess := sessionFrom(r)
+	q := r.URL.Query()
+	format := q.Get("format")
+	if format == "" {
+		format = audit.ExportJSONL
+	}
+	if format != audit.ExportJSONL && format != audit.ExportCSV {
+		writeError(w, http.StatusBadRequest, "format must be jsonl or csv")
+		return
+	}
+	f := filterFromQuery(q)
+	if n, err := strconv.Atoi(q.Get("maxRows")); err == nil && n > 0 {
+		f.Limit = n
+	}
+	if sess.Role != "admin" {
+		f.UserID = sess.UserID
+		f.Username = ""
+	}
+	rec := auditFrom(r)
+	rec.skip = true // audited below with the real row count
+	ct, ext := "application/x-ndjson", "ndjson"
+	if format == audit.ExportCSV {
+		ct, ext = "text/csv", "csv"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Disposition", `attachment; filename="dbyson-audit.`+ext+`"`)
+	n, err := s.Audit.Export(r.Context(), w, format, f)
+	outcome, detail := audit.OutcomeOK, "format="+format
+	if err != nil {
+		// Headers are already sent; the outcome is recorded, not the error.
+		outcome, detail = audit.OutcomeError, "format="+format+" rows="+strconv.Itoa(n)
+	}
+	s.record(r.Context(), audit.Entry{UserID: sess.UserID, Username: sess.Username,
+		IP: clientIP(r), Action: "audit.export", Detail: detail + " rows=" + strconv.Itoa(n), Outcome: outcome})
+}
+
+// purgeAudit deletes entries older than the given retention window. Only
+// admins, and only explicit: there is no silent background deletion.
+func (s *Server) purgeAudit(w http.ResponseWriter, r *http.Request) {
+	if sessionFrom(r).Role != "admin" {
+		writeError(w, http.StatusForbidden, "admin role required")
+		return
+	}
+	var in struct {
+		OlderThanDays int `json:"olderThanDays"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.OlderThanDays < 1 || in.OlderThanDays > 3650 {
+		writeError(w, http.StatusBadRequest, "olderThanDays must be between 1 and 3650")
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -in.OlderThanDays).Unix()
+	res, err := s.Audit.PurgeOlderThan(r.Context(), cutoff)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	auditFrom(r).entry.Detail = "deleted=" + strconv.FormatInt(res.Deleted, 10) + " anchor=" + res.Anchor
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) verifyAudit(w http.ResponseWriter, r *http.Request) {

@@ -7,8 +7,9 @@ interface ConnectionsProps {
   onSelect?: (conn: Connection) => void;
   storageKey?: string;
   startNew?: boolean;
+  isAdmin?: boolean;
 }
-export function Connections({ onSelect, storageKey = "dbyson", startNew = false }: ConnectionsProps) {
+export function Connections({ onSelect, storageKey = "dbyson", startNew = false, isAdmin = false }: ConnectionsProps) {
   const confirm = useConfirm();
   const [items, setItems] = useState<Connection[] | null>(null),
     [editing, setEditing] = useState<Connection | "new" | null>(startNew ? "new" : null),
@@ -74,6 +75,7 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false 
     return (
       <ConnectionForm
         existing={editing === "new" ? undefined : editing}
+        canShare={isAdmin}
         onCancel={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
@@ -192,6 +194,7 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false 
                   onChange={(e) => setSelected((s) => (e.target.checked ? [...s, c.id].slice(0, 25) : s.filter((id) => id !== c.id)))}
                 />
                 <span className={`badge env-${c.env}`}>{c.env}</span>
+                {c.shared && <span className="badge">Compartida</span>}
               </label>
               <button
                 className="favorite-button"

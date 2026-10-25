@@ -35,13 +35,17 @@ Por defecto el binario escucha solo en `127.0.0.1:8080` (`DBYSON_LISTEN` para ca
 | `DBYSON_MASTER_KEY` / `DBYSON_MASTER_KEY_FILE` | — | Clave maestra del vault (base64, 32 bytes). Si no se define, se genera `master.key` en el directorio de datos. **En producción guárdala fuera del volumen de datos** (Docker secret). |
 | `DBYSON_ALLOWED_HOSTS` | vacío (todo permitido salvo link-local) | Lista separada por comas de hosts, IPs o CIDR a los que DByson puede conectarse. |
 | `DBYSON_SETUP_TOKEN` | — | Si se define, es obligatorio para crear el primer administrador. |
-| `DBYSON_MODE` | `personal` | `personal`: una persona en su propia máquina (2FA disponible pero no obligatoria). `team`: DByson accesible por red para varias personas (2FA obligatoria para `prod` y SSH). |
+| `DBYSON_MODE` | `personal` | `personal`: una persona en su propia máquina (2FA disponible pero no obligatoria). `team`: DByson accesible por red para varias personas (2FA obligatoria para `prod` y SSH). En `team`, la clave maestra debe estar fuera del volumen ([guía de equipo](docs/EQUIPOS.md)). |
 | `DBYSON_REQUIRE_MFA` | según el modo | Fuerza la política: `off` (opcional), `sensitive` (conexiones `prod` y túneles SSH, incluida su exportación con credenciales) o `all` (todo salvo el inicio de sesión y la propia configuración de 2FA). Si se define, gana sobre el modo. |
 | `DBYSON_TLS_CERT_FILE` / `DBYSON_TLS_KEY_FILE` | — | Certificado de servidor y clave PEM para HTTPS nativo (TLS 1.3). Deben configurarse juntos. |
 | `DBYSON_TLS_CLIENT_CA_FILE` | — | CA PEM de clientes: exige certificado válido en todo el listener HTTPS, incluido el login. Requiere certificado y clave de servidor. |
 | `DBYSON_WEBAUTHN_RP_ID` / `DBYSON_WEBAUTHN_ORIGIN` | — | Dominio y origen HTTPS explícitos para passkeys; deben configurarse juntos. HTTP solo para localhost. |
+| `DBYSON_OIDC_ISSUER` / `DBYSON_OIDC_CLIENT_ID` / `DBYSON_OIDC_CLIENT_SECRET` | — | SSO OIDC (Google, Microsoft Entra ID, Keycloak). Requiere además `DBYSON_OIDC_REDIRECT_URL` (`.../api/auth/oidc/callback`). |
+| `DBYSON_OIDC_AUTO_PROVISION` | `false` | `true` crea una cuenta `member` al primer inicio SSO (vincula por email verificado si existe). |
+| `DBYSON_OIDC_NAME` | host del emisor | Etiqueta del botón de entrada con SSO. |
+| `DBYSON_AUDIT_RETENTION_DAYS` | `0` (conservar) | Purga al arrancar las entradas anteriores a N días, con anclaje `audit.purged`. |
 
-Generar una clave maestra: `openssl rand -base64 32`.
+Generar una clave maestra: `openssl rand -base64 32`. Rotarla (servidor detenido): `dbyson rotate-key --data-dir /data --new-key-file /ruta/fuera/del/volumen`.
 
 ## Modos TLS hacia MySQL/MariaDB
 
@@ -69,7 +73,7 @@ Vistas internas por tabla, cierre con la rueda, opciones, temas e inspector de r
 
 - **2FA (TOTP):** se activa en *Seguridad* con cualquier app de autenticación. Al activarla se entregan 10 códigos de recuperación de un solo uso y se cierran las demás sesiones. El secreto se guarda cifrado en el vault y cada código solo sirve una vez.
 - **Política:** en modo `personal` (por defecto) la 2FA es opcional: protege poco cuando DByson solo es accesible desde tu máquina. En modo `team` (`DBYSON_MODE=team`) las conexiones `prod` y las que usan túnel SSH solo se abren desde una sesión verificada con 2FA.
-- **Auditoría:** se registran inicios de sesión (también fallidos), cambios en conexiones, consultas SQL, cambios de datos y exportaciones. Las lecturas de tablas no se registran. Las filas no se pueden modificar ni borrar por SQL, y cada una lleva un HMAC encadenado con una clave derivada de la clave maestra: *Verificar integridad* detecta ediciones, borrados o reordenamientos en el archivo. Limitación conocida: truncar las últimas entradas no se detecta hasta que exista un anclaje externo del último hash.
+- **Auditoría:** se registran inicios de sesión (también fallidos), cambios en conexiones, consultas SQL, cambios de datos y exportaciones. Las lecturas de tablas no se registran. Las filas no se pueden modificar ni borrar por SQL, y cada una lleva un HMAC encadenado con una clave derivada de la clave maestra: *Verificar integridad* detecta ediciones, borrados o reordenamientos en el archivo. Limitación conocida: truncar las últimas entradas no se detecta hasta que exista un anclaje externo del último hash. Desde *Auditoría* se exporta a JSONL/CSV para SIEM o archivo, con filtros por usuario y retención configurable ([guía de equipo](docs/EQUIPOS.md)).
 
 ## Conectividad segura
 
@@ -99,11 +103,11 @@ Construir localmente para ambas arquitecturas: `docker buildx build --platform l
 
 ## Migrar desde AdminBase
 
-El proyecto se llamó AdminBase. Desde esta versión todo usa el nombre DByson; una instalación anterior sigue funcionando sin cambios:
+El proyecto se llamó AdminBase. Desde esta versión todo usa el nombre DByson; los datos y volúmenes anteriores siguen sirviendo tal cual, pero las variables `ADMINBASE_*` hay que renombrarlas a `DBYSON_*` (las antiguas se ignoran):
 
 | Antes | Ahora | Compatibilidad |
 |---|---|---|
-| Variables `ADMINBASE_*` | `DBYSON_*` | Las antiguas se siguen leyendo hasta la v1.0 y el log avisa de cuáles renombrar. Si existen ambas, gana `DBYSON_*`. |
+| Variables `ADMINBASE_*` | `DBYSON_*` | Eliminadas en la v1.0: se ignoran y el log avisa de cuáles quitar. |
 | Archivo `adminbase.db` | `dbyson.db` | Se renombra solo al arrancar (con sus archivos `-wal`/`-shm`). |
 | Imagen `adminbase:dev`, binario `/adminbase`, volumen `adminbase-data` | `dbyson:dev`, `/dbyson`, `dbyson-data` | El volumen antiguo sirve tal cual: basta montarlo en `/data`. |
 | Cookie `ab_session` | `dbyson_session` | Hay que volver a iniciar sesión una vez. |

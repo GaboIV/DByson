@@ -12,6 +12,7 @@ import (
 	"github.com/gaboiv/dbyson/internal/audit"
 	"github.com/gaboiv/dbyson/internal/auth"
 	"github.com/gaboiv/dbyson/internal/policy"
+	"github.com/gaboiv/dbyson/internal/sso"
 	"github.com/gaboiv/dbyson/internal/store"
 	"github.com/gaboiv/dbyson/internal/vault"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -26,12 +27,14 @@ type Deps struct {
 	SetupToken string // optional: required to create the first admin when set
 	Audit      *audit.Logger
 	MFAPolicy  string // off | sensitive | all (see mfa.go); empty means sensitive
+	OIDC       *sso.Provider
 }
 
 type Server struct {
 	passkeyPending passkeyCeremonies
 	queries        queryRegistry
 	confirmations  sync.Map // short-lived, single-use challenges
+	oidcStates     oidcStates
 	mfaPending     mfaChallenges
 	Deps
 	version  string
@@ -41,8 +44,9 @@ type Server struct {
 	ipThrottle *auth.Throttle
 }
 
-// NewRouter wires the API and the embedded single-page app.
-func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
+// newServer builds the API server without routes, so tests can hold the same
+// instance that serves their requests (shared short-lived challenge maps).
+func newServer(version string, deps Deps) *Server {
 	s := &Server{
 		Deps:       deps,
 		version:    version,
@@ -57,13 +61,22 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 	if s.Audit == nil && deps.Vault != nil {
 		s.Audit = audit.New(deps.Store.DB, deps.Vault.DeriveKey("audit"))
 	}
+	return s
+}
+
+// NewRouter wires the API and the embedded single-page app.
+func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
+	return newServer(version, deps).routes(assets)
+}
+
+func (s *Server) routes(assets fs.FS) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"version": version})
+		writeJSON(w, http.StatusOK, map[string]string{"version": s.version})
 	})
 
 	mux.HandleFunc("GET /api/status", s.handleStatus)
@@ -83,6 +96,9 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 	mux.Handle("GET /api/auth/sessions", s.requireAuth(s.listSessions))
 	mux.Handle("DELETE /api/auth/sessions/{sessionID}", s.requireAuth(s.revokeSession))
 	mux.Handle("POST /api/auth/sessions/revoke-others", s.requireAuth(s.revokeOtherSessions))
+	mux.HandleFunc("GET /api/auth/oidc/status", s.handleOIDCStatus)
+	mux.HandleFunc("GET /api/auth/oidc/login", s.handleOIDCLogin)
+	mux.HandleFunc("GET /api/auth/oidc/callback", s.handleOIDCCallback)
 	mux.HandleFunc("POST /api/auth/mfa/verify", s.handleMFAVerify)
 	mux.Handle("GET /api/auth/mfa", s.requireAuth(s.handleMFAStatus))
 	mux.Handle("POST /api/auth/mfa/setup", s.requireAuth(s.handleMFASetup))
@@ -91,6 +107,13 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 	mux.Handle("POST /api/auth/mfa/recovery-codes", s.requireAuth(s.handleMFARecoveryCodes))
 	mux.Handle("GET /api/audit", s.requireAuth(s.listAudit))
 	mux.Handle("GET /api/audit/verify", s.requireAuth(s.verifyAudit))
+	mux.Handle("GET /api/audit/export", s.requireAuth(s.exportAudit))
+	mux.Handle("POST /api/audit/purge", s.requireAuth(s.purgeAudit))
+
+	mux.Handle("GET /api/users", s.requireAuth(s.listUsers))
+	mux.Handle("POST /api/users", s.requireAuth(s.createUser))
+	mux.Handle("PUT /api/users/{id}", s.requireAuth(s.updateUser))
+	mux.Handle("DELETE /api/users/{id}", s.requireAuth(s.deleteUser))
 
 	mux.Handle("GET /api/connections", s.requireAuth(s.listConnections))
 	mux.Handle("POST /api/connections", s.requireAuth(s.createConnection))
@@ -99,6 +122,10 @@ func NewRouter(version string, assets fs.FS, deps Deps) http.Handler {
 	mux.Handle("PUT /api/connections/{id}", s.requireAuth(s.updateConnection))
 	mux.Handle("DELETE /api/connections/{id}", s.requireAuth(s.deleteConnection))
 	mux.Handle("POST /api/connections/{id}/test", s.requireAuth(s.testSavedConnection))
+
+	mux.Handle("GET /api/connections/{id}/grants", s.requireAuth(s.listGrants))
+	mux.Handle("POST /api/connections/{id}/grants", s.requireAuth(s.createGrant))
+	mux.Handle("DELETE /api/connections/{id}/grants/{userID}", s.requireAuth(s.deleteGrant))
 
 	mux.Handle("POST /api/connections/{id}/test-draft", s.requireAuth(s.testDraftConnection))
 	mux.Handle("POST /api/connections/{id}/ssh/fingerprint", s.requireAuth(s.sshFingerprint))

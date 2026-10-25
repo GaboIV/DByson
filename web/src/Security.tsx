@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, ApiError, type AuditEntry, type Connection, type MFAStatus } from "./api";
+import { api, ApiError, type AuditEntry, type Connection, type MFAStatus, type TeamRole, type TeamUser } from "./api";
 import { Dialog } from "./Dialog";
 import { useClipboard } from "./clipboard";
 import { SessionsPanel } from "./Sessions";
@@ -481,10 +481,164 @@ export function AuditDialog({ connections, onClose }: { connections: Connection[
       {!loading && !entries.length && !error && <p className="muted">No hay actividad registrada con este filtro.</p>}
       {loading && <p className="muted">Cargando…</p>}
       {more && !loading && <button onClick={() => void fetchPage(entries[entries.length - 1]?.id)}>Cargar más</button>}
+      <div className="section-heading">
+        <span className="muted">Exportar para un sistema externo (SIEM, archivo)</span>
+        <span>
+          <a href="/api/audit/export?format=jsonl">JSONL</a> · <a href="/api/audit/export?format=csv">CSV</a>
+        </span>
+      </div>
       <p className="muted">
         Se registran accesos, cambios, consultas SQL y exportaciones; las lecturas de tablas no. Las contraseñas que aparecen en el SQL se
         ocultan.
       </p>
+    </Dialog>
+  );
+}
+
+const ROLES: TeamRole[] = ["admin", "member", "viewer"];
+
+const ROLE_LABELS: Record<TeamRole, string> = {
+  admin: "Administración",
+  member: "Miembro",
+  viewer: "Solo lectura",
+};
+
+export function TeamDialog({ onClose }: { onClose: () => void }) {
+  const [users, setUsers] = useState<TeamUser[]>([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState<TeamRole>("member");
+
+  const load = useCallback(async () => {
+    try {
+      setError("");
+      setUsers(await api<TeamUser[]>("GET", "/api/users"));
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function act(action: () => Promise<unknown>) {
+    setBusy(true);
+    setError("");
+    try {
+      await action();
+      setUsername("");
+      setPassword("");
+      await load();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog title="Equipo" onClose={onClose} className="team-dialog">
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      <form
+        className="settings-section"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void act(() => api("POST", "/api/users", { username, password, role }));
+        }}
+      >
+        <h4>Crear cuenta</h4>
+        <label>
+          Usuario
+          <input value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} maxLength={64} />
+        </label>
+        <label>
+          Contraseña
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={12}
+            autoComplete="new-password"
+          />
+        </label>
+        <label>
+          Rol
+          <select value={role} onChange={(e) => setRole(e.target.value as TeamRole)}>
+            {ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="primary" disabled={busy}>
+          Crear
+        </button>
+      </form>
+      <div className="settings-section">
+        <h4>Cuentas ({users.length})</h4>
+        {!users.length && <p className="muted">Cargando…</p>}
+        <ol className="team-list">
+          {users.map((u) => (
+            <li key={u.id}>
+              <header>
+                <strong>{u.username}</strong>
+                <span className="muted">
+                  {ROLE_LABELS[u.role] ?? u.role}
+                  {u.disabled ? " · deshabilitada" : ""}
+                </span>
+              </header>
+              <div className="team-actions">
+                <select
+                  aria-label={`Rol de ${u.username}`}
+                  value={u.role}
+                  disabled={busy}
+                  onChange={(e) => void act(() => api("PUT", `/api/users/${u.id}`, { role: e.target.value }))}
+                >
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </option>
+                  ))}
+                </select>
+                <button disabled={busy} onClick={() => void act(() => api("PUT", `/api/users/${u.id}`, { disabled: !u.disabled }))}>
+                  {u.disabled ? "Habilitar" : "Deshabilitar"}
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => {
+                    const next = window.prompt(`Nueva contraseña para ${u.username} (mínimo 12 caracteres):`, "");
+                    if (next) void act(() => api("PUT", `/api/users/${u.id}`, { password: next }));
+                  }}
+                >
+                  Cambiar contraseña
+                </button>
+                <button
+                  className="danger"
+                  disabled={busy}
+                  onClick={() => {
+                    if (window.confirm(`Eliminar la cuenta ${u.username}? Sus conexiones privadas se eliminan con ella.`))
+                      void act(() => api("DELETE", `/api/users/${u.id}`));
+                  }}
+                >
+                  Eliminar
+                </button>
+              </div>
+            </li>
+          ))}
+        </ol>
+        <p className="muted">
+          Solo lectura nunca abre producción. Deshabilitar cierra las sesiones de la cuenta al momento. La última administración activa no
+          se puede degradar, deshabilitar ni eliminar.
+        </p>
+      </div>
     </Dialog>
   );
 }

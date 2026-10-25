@@ -21,9 +21,9 @@ type savedQuery struct {
 }
 
 func (s *Server) savedQueries(w http.ResponseWriter, r *http.Request) {
-	rec, connectionSecret, err := s.loadOwned(r.Context(), r)
+	rec, connectionSecret, err := s.loadConnection(r.Context(), r, GrantUse)
 	if err != nil {
-		s.fail(w, err)
+		s.failAccess(w, r, err)
 		return
 	}
 	if err := s.mfaGate(r, rec.Env, connectionSecret.SSH.Enabled); err != nil {

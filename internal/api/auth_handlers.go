@@ -253,17 +253,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
-		id   int64
-		hash string
-		role string
-		name string
+		id       int64
+		hash     string
+		role     string
+		name     string
+		disabled bool
 	)
 	err := s.Store.DB.QueryRowContext(r.Context(),
-		`SELECT id, username, password_hash, role FROM users WHERE username = ?`, in.Username).
-		Scan(&id, &name, &hash, &role)
+		`SELECT id, username, password_hash, role, disabled FROM users WHERE username = ?`, in.Username).
+		Scan(&id, &name, &hash, &role, &disabled)
 
 	ok := false
-	if err == nil && len(in.Password) <= auth.MaxPasswordLen {
+	if err == nil && !disabled && len(in.Password) <= auth.MaxPasswordLen {
 		ok, _ = auth.VerifyPassword(in.Password, hash)
 	} else {
 		auth.BurnPasswordCheck(in.Password) // same cost whether or not the user exists

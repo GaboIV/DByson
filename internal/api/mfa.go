@@ -469,6 +469,13 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.throttle.Reset(key)
+	var disabled bool
+	if err := s.Store.DB.QueryRowContext(r.Context(), `SELECT disabled FROM users WHERE id = ?`, ch.userID).Scan(&disabled); err != nil || disabled {
+		e.Outcome = audit.OutcomeDenied
+		s.record(r.Context(), e)
+		writeError(w, http.StatusUnauthorized, "invalid username or password")
+		return
+	}
 	s.mfaPending.done(in.Token)
 	s.record(r.Context(), e)
 	s.startSession(w, r, ch.userID, ch.username, ch.role, true)

@@ -105,6 +105,10 @@ type Filter struct {
 	BeforeID int64  // page backwards: entries with id < BeforeID
 	UserID   int64  // 0 = all users
 	Action   string // prefix match
+	Username string // exact match
+	Outcome  string // exact match: ok, error, denied, confirmation_requested
+	Since    int64  // unix seconds, inclusive; 0 = no lower bound
+	Until    int64  // unix seconds, inclusive; 0 = no upper bound
 }
 
 func (l *Logger) List(ctx context.Context, f Filter) ([]Entry, error) {
@@ -125,6 +129,22 @@ func (l *Logger) List(ctx context.Context, f Filter) ([]Entry, error) {
 	if f.Action != "" {
 		q += ` AND action LIKE ? ESCAPE '\'`
 		args = append(args, escapeLike(f.Action)+"%")
+	}
+	if f.Username != "" {
+		q += ` AND username = ?`
+		args = append(args, f.Username)
+	}
+	if f.Outcome != "" {
+		q += ` AND outcome = ?`
+		args = append(args, f.Outcome)
+	}
+	if f.Since != 0 {
+		q += ` AND at >= ?`
+		args = append(args, f.Since)
+	}
+	if f.Until != 0 {
+		q += ` AND at <= ?`
+		args = append(args, f.Until)
 	}
 	q += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, f.Limit)

@@ -37,41 +37,68 @@ func New(masterKey []byte) (*Vault, error) {
 	return v, nil
 }
 
+// KeySource tells where the master key came from. Team mode refuses
+// SourceGenerated: the key must live outside the data volume there.
+type KeySource string
+
+const (
+	SourceEnv       KeySource = "env"       // DBYSON_MASTER_KEY
+	SourceFile      KeySource = "file"      // DBYSON_MASTER_KEY_FILE (Docker secret)
+	SourceGenerated KeySource = "generated" // <dataDir>/master.key, created on first run
+)
+
 // LoadKey resolves the master key, in order of precedence:
 //  1. DBYSON_MASTER_KEY      (base64, 32 bytes)
 //  2. DBYSON_MASTER_KEY_FILE (file containing the base64 key; works with Docker secrets)
 //  3. <dataDir>/master.key      (generated on first run with mode 0600)
 //
+// It also reports where the key came from and, for file-backed keys, which
+// file, so callers can enforce "key outside the data volume" policies.
 // For a real deployment prefer 1 or 2 so the key is not stored next to the encrypted data.
-func LoadKey(dataDir string) ([]byte, error) {
+func LoadKey(dataDir string) (key []byte, source KeySource, path string, err error) {
 	if v := strings.TrimSpace(config.Get("MASTER_KEY")); v != "" {
-		return decodeKey(v)
+		key, err = DecodeKey(v)
+		return key, SourceEnv, "", err
 	}
 	if f := config.Get("MASTER_KEY_FILE"); f != "" {
-		b, err := os.ReadFile(f)
+		var b []byte
+		b, err = os.ReadFile(f)
 		if err != nil {
-			return nil, fmt.Errorf("read master key file: %w", err)
+			return nil, SourceFile, f, fmt.Errorf("read master key file: %w", err)
 		}
-		return decodeKey(string(b))
+		key, err = DecodeKey(string(b))
+		return key, SourceFile, f, err
 	}
-	path := filepath.Join(dataDir, "master.key")
-	if b, err := os.ReadFile(path); err == nil {
-		return decodeKey(string(b))
+	path = filepath.Join(dataDir, "master.key")
+	var b []byte
+	if b, err = os.ReadFile(path); err == nil {
+		key, err = DecodeKey(string(b))
+		return key, SourceGenerated, path, err
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+		return nil, SourceGenerated, path, err
 	}
-	key := make([]byte, keySize)
-	if _, err := rand.Read(key); err != nil {
-		return nil, err
+	key = make([]byte, keySize)
+	if _, err = rand.Read(key); err != nil {
+		return nil, SourceGenerated, path, err
 	}
 	enc := base64.StdEncoding.EncodeToString(key)
-	if err := os.WriteFile(path, []byte(enc+"\n"), 0o600); err != nil {
-		return nil, fmt.Errorf("write master key: %w", err)
+	if err = os.WriteFile(path, []byte(enc+"\n"), 0o600); err != nil {
+		return nil, SourceGenerated, path, fmt.Errorf("write master key: %w", err)
 	}
-	return key, nil
+	return key, SourceGenerated, path, nil
 }
 
-func decodeKey(s string) ([]byte, error) {
+// EncodeKey renders a master key the way LoadKey accepts it (base64 + newline).
+func EncodeKey(key []byte) string { return base64.StdEncoding.EncodeToString(key) + "\n" }
+
+// Fingerprint identifies a key in logs without exposing it.
+func Fingerprint(key []byte) string {
+	sum := sha256.Sum256(key)
+	return fmt.Sprintf("%x", sum[:])[:16]
+}
+
+// DecodeKey parses a base64 master key as accepted by LoadKey and --new-key.
+func DecodeKey(s string) ([]byte, error) {
 	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
 	if err != nil {
 		return nil, fmt.Errorf("master key is not valid base64: %w", err)

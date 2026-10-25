@@ -84,11 +84,17 @@ func TestProfileTransfer(t *testing.T) {
 		t.Fatal("plain secret allowed")
 	}
 	hash, _ := auth.HashPassword("another-long-password")
-	env.store.DB.Exec(`INSERT INTO users(username,password_hash,role,created_at)VALUES('other',?,'admin',0)`, hash)
+	env.store.DB.Exec(`INSERT INTO users(username,password_hash,role,created_at)VALUES('other',?,'member',0)`, hash)
 	other := env.client()
 	other.loginFrom(other.do("POST", "/api/auth/login", map[string]string{"username": "other", "password": "another-long-password"}))
 	if other.do("POST", "/api/connections/transfer/export", map[string]any{"ids": []string{original.ID}}).Code != 404 {
-		t.Fatal("another owner could export credentials")
+		t.Fatal("ungranted member could export credentials")
+	}
+	// Central administration: admins see every profile, members only their own.
+	env.store.DB.Exec(`UPDATE users SET role = 'admin' WHERE username = 'other'`)
+	other.loginFrom(other.do("POST", "/api/auth/login", map[string]string{"username": "other", "password": "another-long-password"}))
+	if other.do("POST", "/api/connections/transfer/export", map[string]any{"ids": []string{original.ID}}).Code != 200 {
+		t.Fatal("admin could not export a profile under central administration")
 	}
 }
 

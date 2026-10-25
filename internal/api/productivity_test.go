@@ -39,7 +39,7 @@ func TestSavedQueriesEncryptedAndPrivate(t *testing.T) {
 	if res.Code != 200 || !strings.Contains(res.Body.String(), "sensitive-query-value") {
 		t.Fatal(res.Code, res.Body.String())
 	}
-	result, err := e.store.DB.Exec(`INSERT INTO users(username,password_hash,created_at) VALUES('other','unused',0)`)
+	result, err := e.store.DB.Exec(`INSERT INTO users(username,password_hash,role,created_at) VALUES('other','unused','member',0)`)
 	if err != nil {
 		t.Fatal(err)
 	}

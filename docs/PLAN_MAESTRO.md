@@ -15,7 +15,7 @@ DByson ya es una herramienta usable a diario para **una persona con MySQL/MariaD
 
 1. **Integrar y desplegar la Fase 2:** la v0.1.0 está publicada y firmada. Las mejoras de conectividad segura están implementadas y validadas localmente; falta su integración y despliegue ([guía](CONECTIVIDAD_SEGURA.md)). La comprobación de marca está aplazada y no bloquea publicaciones.
 2. **Productividad de un cliente maduro:** editor SQL con autocompletado, consultas guardadas, EXPLAIN, navegación por claves foráneas, importación.
-3. **Modo equipo:** hoy solo existe el administrador inicial; no hay gestión de usuarios, roles, conexiones compartidas ni SSO.
+3. **Modo equipo:** usuarios, roles, conexiones compartidas, SSO, retención de auditoría y retirada de `ADMINBASE_*` implementados ([EQUIPOS.md](EQUIPOS.md)); quedan la interfaz de permisos y el pentest externo antes de la v1.0.
 
 | Fase | Estado | Resumen |
 |---|---|---|
@@ -23,7 +23,7 @@ DByson ya es una herramienta usable a diario para **una persona con MySQL/MariaD
 | 1 · MVP MySQL | ✅ v0.1.0 publicada | CI, aceptación, imagen multi-arquitectura firmada y escaneada. Marca aplazada sin bloquear releases. |
 | 2 · Conectividad segura | 🟢 Implementada; integración pendiente | Cancelación con KILL QUERY, sesiones revocables, certificados MySQL y mTLS nativo; pruebas locales y CI configurada. |
 | 3 · Productividad | 🟡 Iniciada | Pestañas, paleta y archivos `.sql` listos. El resto pendiente. |
-| 4 · Equipos | ⬜ Base preparada | Modo `team`, aislamiento por usuario y exportación de perfiles. Falta lo esencial: usuarios, roles, SSO. |
+| 4 · Equipos | 🟡 Implementada | Usuarios, roles, conexiones compartidas, SSO OIDC, auditoría exportable con retención y clave externa con rotación. Quedan: interfaz de permisos y pentest externo. |
 | 5+ · Expansión | ⬜ Pendiente | Solo MySQL/MariaDB; el contrato de drivers aún no existe en el código. |
 
 ---
@@ -72,7 +72,7 @@ DByson ya es una herramienta usable a diario para **una persona con MySQL/MariaD
  │ policy/     lista blanca de destinos (anti-SSRF), clasificador SQL, solo lectura        │
  │ tunnel/     SSH: clave/PPK/agente/contraseña, bastión, huella fijada                    │
  │ drivers/mysql/  conexión TLS, explorador, consulta limitada, exportación en streaming   │
- │ config/     variables DBYSON_* (con compatibilidad ADMINBASE_*)                         │
+ │ config/     solo variables DBYSON_* (compat ADMINBASE_* retirada en v1.0)           │
  │ store/      SQLite + migraciones (/data/dbyson.db)                                      │
  └──────────────────────────────────────────────────────────────────────────────────────┘
    │ TLS verify_identity por defecto        │ SSH → direct-tcpip (sin puertos locales)
@@ -98,11 +98,11 @@ El estado detallado, con lo implementado, lo parcial y los riesgos aceptados, es
 
 | Área | Hecho | Pendiente |
 |---|---|---|
-| Acceso a DByson | Argon2id, límites por usuario e IP, sesiones revocables, TOTP, política por modo y mTLS con cookie vinculada al certificado | Passkeys, SSO OIDC |
+| Acceso a DByson | Argon2id, límites por usuario e IP, sesiones revocables, TOTP, política por modo, mTLS con cookie vinculada al certificado, SSO OIDC y passkeys | Endurecer con pentest externo |
 | Conexiones | TLS con 4 modos, CA propia y certificados de cliente validados en integración; SSH con huella fijada y bastión; lista blanca anti-SSRF | Ampliar la matriz de versiones de motores |
 | Errores humanos | Entornos, solo lectura, confirmación escrita de un solo uso, límites de resultado y cancelación de SQL con KILL QUERY | Edición en lote con vista previa transaccional |
-| Datos en reposo | Vault con cifrado de sobre; clave maestra por variable, archivo o generada | Comando de rotación de la clave maestra; exigir clave externa en modo `team` |
-| Auditoría | Append-only con cadena HMAC verificable, visor en la interfaz, SQL con contraseñas ocultas | Exportación a syslog/SIEM, retención, anclaje externo del último hash |
+| Datos en reposo | Vault con cifrado de sobre; clave maestra por variable, archivo o generada; rotación con `rotate-key`; clave externa exigida en modo `team` | — |
+| Auditoría | Append-only con cadena HMAC verificable, visor en la interfaz, SQL con contraseñas ocultas, exportación JSONL/CSV a SIEM, retención con anclaje | Anclaje externo automático del último hash |
 | Cadena de suministro | Distroless no-root, `govulncheck`, `npm audit`, Trivy, SBOM, procedencia y firma cosign en release | Primera ejecución real; Dependabot/Renovate; CodeQL |
 
 > **Recomendación operativa:** no exponer DByson a Internet sin VPN/zero-trust, mTLS o SSO delante. Por defecto escucha en `127.0.0.1`.
@@ -181,18 +181,19 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 - Detalle de uso y límites: [PRODUCTIVIDAD.md](PRODUCTIVIDAD.md). Cambios en `codex/productivity`, pendientes de commit/PR y CI remoto. Activar passkeys en una instalación requiere configurar su origen y registrar dispositivos.
 - **Entregable:** `v0.5.0`, el equipo deja Adminer/phpMyAdmin para el trabajo diario.
 
-### Fase 4 — Equipos · ⬜ base preparada
+### Fase 4 — Equipos · 🟡 implementada, pendiente de endurecer
 - [x] Modo `team` y aislamiento de perfiles por usuario.
 - [x] Exportación/importación de perfiles `.dbyson`.
-- [ ] **Gestión de usuarios** (hoy solo existe el administrador inicial).
-- [ ] Roles y permisos por conexión y entorno.
-- [ ] Conexiones compartidas con administración central.
-- [ ] SSO OIDC (Google, Microsoft Entra ID, Keycloak).
-- [ ] Auditoría: filtros por usuario, exportación, retención, envío a SIEM.
-- [ ] Exigir clave maestra externa en modo `team`; comando de rotación.
-- [ ] Guía de despliegue con HTTPS y VPN/zero-trust.
-- [ ] **Pentest externo** antes de la v1.0.
-- [ ] Retirar la compatibilidad con `ADMINBASE_*`.
+- [x] **Gestión de usuarios** (panel *Equipo*, API `/api/users`, protección de la última administración, bloqueo inmediato).
+- [x] Roles (`admin`/`member`/`viewer`) y permisos por conexión (`use`/`manage`) y entorno (`viewer` nunca abre `prod`).
+- [x] Conexiones compartidas con administración central.
+- [x] SSO OIDC (Google, Microsoft Entra ID, Keycloak; RS256, auto-aprovisionamiento opcional). Detalle en [EQUIPOS.md](EQUIPOS.md).
+- [x] Auditoría: filtros por usuario, exportación JSONL/CSV a SIEM, retención con anclaje.
+- [x] Exigir clave maestra externa en modo `team`; comando `rotate-key`.
+- [x] Guía de despliegue con HTTPS y VPN/zero-trust ([EQUIPOS.md](EQUIPOS.md), [CONECTIVIDAD_SEGURA.md](CONECTIVIDAD_SEGURA.md)).
+- [ ] Interfaz de permisos por conexión (hoy por API `grants`).
+- [x] Retirar la compatibilidad con `ADMINBASE_*` (se ignoran; el arranque avisa).
+- [ ] **Pentest externo** — riesgo aceptado por escrito (2026-10-25), contratar cuando sea posible, ver [PENTEST.md](PENTEST.md).
 - **Entregable:** `v1.0.0`.
 
 ### Fase 5+ — Expansión · ⬜
@@ -267,4 +268,4 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 1. Integrar las mejoras de interfaz y la Fase 2, y confirmar su CI remota.
 2. Configurar los certificados reales para activar mTLS siguiendo la guía de despliegue.
 3. Publicar la siguiente versión cuando se apruebe la integración; no mover la etiqueta v0.1.0 existente.
-4. Integrar la Fase 3 desde `codex/productivity`, revisar sus límites documentados y después iniciar la gestión de usuarios de DByson de la Fase 4.
+4. Endurecer la Fase 4 (interfaz de permisos, revisión de seguridad) y contratar el pentest externo ([PENTEST.md](PENTEST.md)) antes de la v1.0.

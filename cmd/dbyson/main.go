@@ -9,12 +9,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gaboiv/dbyson/internal/api"
+	"github.com/gaboiv/dbyson/internal/audit"
 	"github.com/gaboiv/dbyson/internal/config"
 	"github.com/gaboiv/dbyson/internal/policy"
+	"github.com/gaboiv/dbyson/internal/sso"
 	"github.com/gaboiv/dbyson/internal/store"
 	"github.com/gaboiv/dbyson/internal/transport"
 	"github.com/gaboiv/dbyson/internal/vault"
@@ -26,6 +31,13 @@ var version = "dev"
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if len(os.Args) > 1 && os.Args[1] == "rotate-key" {
+		if err := runRotateKey(log, os.Args[2:]); err != nil {
+			log.Error("fatal", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(log); err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
@@ -50,7 +62,7 @@ func run(log *slog.Logger) error {
 	}
 	defer st.Close()
 
-	key, err := vault.LoadKey(dataDir)
+	key, keySource, keyPath, err := vault.LoadKey(dataDir)
 	if err != nil {
 		return err
 	}
@@ -58,7 +70,29 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if days, _ := strconv.Atoi(config.Get("AUDIT_RETENTION_DAYS")); days > 0 {
+		cutoff := time.Now().AddDate(0, 0, -days).Unix()
+		res, err := audit.New(st.DB, v.DeriveKey("audit")).PurgeOlderThan(context.Background(), cutoff)
+		if err != nil {
+			return fmt.Errorf("audit retention purge: %w", err)
+		}
+		if res.Deleted > 0 {
+			log.Info("audit retention purge", "deleted", res.Deleted, "anchor", res.Anchor)
+		}
+	}
 	mode := config.GetOr("MODE", modePersonal)
+	if mode == modeTeam {
+		// In team mode the database is reachable over the network, so a key
+		// stored next to the data it encrypts defeats the vault: anyone with
+		// the volume reads every credential. Refuse to start instead.
+		if keySource == vault.SourceGenerated {
+			return fmt.Errorf("DBYSON_MODE=team requires DBYSON_MASTER_KEY or DBYSON_MASTER_KEY_FILE outside %s (refusing to use the generated %s)", dataDir, keyPath)
+		}
+		if keySource == vault.SourceFile && pathInside(dataDir, keyPath) {
+			return fmt.Errorf("DBYSON_MODE=team requires DBYSON_MASTER_KEY_FILE outside the data directory (got %s)", keyPath)
+		}
+		log.Info("master key", "source", string(keySource), "fingerprint", vault.Fingerprint(key))
+	}
 	mfaPolicy, err := resolveMFAPolicy(mode, config.Get("REQUIRE_MFA"))
 	if err != nil {
 		return err
@@ -68,8 +102,9 @@ func run(log *slog.Logger) error {
 			"addr", addr)
 	}
 	log.Info("security policy", "mode", mode, "mfa", mfaPolicy)
-	if old := config.Deprecated(); len(old) > 0 {
-		log.Warn("deprecated environment variables: rename the ADMINBASE_ prefix to DBYSON_", "variables", old)
+	if legacy := config.LegacyPresent(); len(legacy) > 0 {
+		log.Warn("ignoring legacy ADMINBASE_* variables (support removed in v1.0): remove them",
+			"variables", legacy)
 	}
 	pol, err := policy.ParseAllowlist(config.Get("ALLOWED_HOSTS"))
 	if err != nil {
@@ -78,6 +113,20 @@ func run(log *slog.Logger) error {
 	passkeys, err := api.NewPasskeys(config.Get("WEBAUTHN_RP_ID"), config.Get("WEBAUTHN_ORIGIN"))
 	if err != nil {
 		return err
+	}
+	oidc := sso.New(sso.Config{
+		Issuer:        config.Get("OIDC_ISSUER"),
+		ClientID:      config.Get("OIDC_CLIENT_ID"),
+		ClientSecret:  config.Get("OIDC_CLIENT_SECRET"),
+		RedirectURL:   config.Get("OIDC_REDIRECT_URL"),
+		ProviderName:  config.Get("OIDC_NAME"),
+		AutoProvision: config.Get("OIDC_AUTO_PROVISION") == "true" || config.Get("OIDC_AUTO_PROVISION") == "1",
+	})
+	if oidc.Config().Enabled() {
+		log.Info("sso enabled", "provider", oidc.Config().Name(), "autoProvision", oidc.Config().AutoProvision)
+		if oidc.Config().RedirectURL == "" {
+			log.Warn("sso callback URL is not configured: set DBYSON_OIDC_REDIRECT_URL")
+		}
 	}
 
 	srv := &http.Server{
@@ -90,6 +139,7 @@ func run(log *slog.Logger) error {
 			Policy:     pol,
 			SetupToken: config.Get("SETUP_TOKEN"),
 			MFAPolicy:  mfaPolicy,
+			OIDC:       oidc,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -152,6 +202,20 @@ func resolveMFAPolicy(mode, explicit string) (string, error) {
 		return "", fmt.Errorf("DBYSON_REQUIRE_MFA must be off, sensitive or all (got %q)", explicit)
 	}
 	return explicit, nil
+}
+
+// pathInside reports whether path resolves inside dir.
+func pathInside(dir, path string) bool {
+	absDir, err1 := filepath.Abs(dir)
+	absPath, err2 := filepath.Abs(path)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absDir, absPath)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func isLoopback(addr string) bool {

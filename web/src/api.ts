@@ -163,9 +163,34 @@ export interface Connection {
   database: string;
   tlsMode: TLSMode;
   readOnly: boolean;
+  shared: boolean;
+  ownerId: number;
   hasPassword: boolean;
   hasCaCert: boolean;
   hasClientCert: boolean;
+}
+
+export type TeamRole = "admin" | "member" | "viewer";
+export type GrantLevel = "use" | "manage";
+
+export interface TeamUser {
+  id: number;
+  username: string;
+  email?: string;
+  role: TeamRole;
+  disabled: boolean;
+  createdAt: number;
+}
+
+export interface ConnectionGrant {
+  userId: number;
+  username: string;
+  level: GrantLevel;
+}
+
+export interface OIDCStatus {
+  enabled: boolean;
+  provider: string;
 }
 
 export interface ConnectionInput {
@@ -178,6 +203,7 @@ export interface ConnectionInput {
   database: string;
   tlsMode: TLSMode;
   readOnly: boolean;
+  shared?: boolean;
   password?: string;
   caCert?: string;
   clientCert?: string;

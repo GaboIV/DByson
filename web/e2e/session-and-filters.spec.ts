@@ -138,8 +138,8 @@ test("Filtros: barra unida, padding lateral, separadores y desplegables del tema
         };
       });
       expect(Math.abs(layout.gap)).toBeLessThan(1);
-      expect(layout.top).toBe("0px");
-      expect(layout.bottom).toBe("0px");
+      expect(layout.top).toBe("4px");
+      expect(layout.bottom).toBe("4px");
       expect(layout.left).toBeGreaterThan(0);
       expect(layout.native).toBe(0);
       expect(layout.separators).toBe(true);

@@ -135,6 +135,29 @@ CREATE TABLE passkey_handles (
   handle BLOB NOT NULL UNIQUE
 );
 `,
+
+	// 5: team mode. Roles member/viewer, shared connections with per-connection
+	// grants, and generic OIDC accounts (Google, Microsoft Entra ID, Keycloak).
+	// Never edit an applied migration: this one is appended last.
+	`
+ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT '';
+ALTER TABLE connections ADD COLUMN shared INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE connection_grants (
+  connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  level TEXT NOT NULL DEFAULT 'use',
+  PRIMARY KEY (connection_id, user_id)
+);
+CREATE INDEX idx_grants_user ON connection_grants(user_id);
+CREATE TABLE oidc_accounts (
+  provider TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (provider, subject)
+);
+CREATE INDEX idx_oidc_user ON oidc_accounts(user_id);
+`,
 }
 
 func migrate(db *sql.DB) error {

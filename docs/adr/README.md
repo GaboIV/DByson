@@ -13,3 +13,4 @@ Un ADR aceptado no se edita; si la decisión cambia, se escribe uno nuevo que lo
 | [0006](0006-renombrado-a-dbyson.md) | Renombrado completo de AdminBase a DByson | Aceptada |
 | [0007](0007-conectividad-segura.md) | Cancelación de consultas, revocación de sesiones y mTLS nativo | Aceptada |
 | [0008](0008-productividad-y-passkeys.md) | Biblioteca cifrada, importaciones, administración MySQL y passkeys | Aceptada |
+| [0009](0009-modelo-de-equipo.md) | Roles, conexiones compartidas, SSO OIDC y retención de auditoría | Aceptada |

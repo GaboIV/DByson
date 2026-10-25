@@ -3,6 +3,7 @@ package vault
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -68,11 +69,14 @@ func TestLoadKeyGeneratesAndReuses(t *testing.T) {
 	t.Setenv("DBYSON_MASTER_KEY", "")
 	t.Setenv("DBYSON_MASTER_KEY_FILE", "")
 	dir := t.TempDir()
-	k1, err := LoadKey(dir)
+	k1, src1, _, err := LoadKey(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	k2, err := LoadKey(dir)
+	if src1 != SourceGenerated {
+		t.Fatalf("fresh data dir must report a generated key, got %q", src1)
+	}
+	k2, _, _, err := LoadKey(dir)
 	if err != nil || !bytes.Equal(k1, k2) {
 		t.Fatalf("key must persist across loads: %v", err)
 	}
@@ -83,8 +87,21 @@ func TestLoadKeyGeneratesAndReuses(t *testing.T) {
 
 func TestLoadKeyRejectsBadEnv(t *testing.T) {
 	t.Setenv("DBYSON_MASTER_KEY", "dG9vc2hvcnQ=")
-	if _, err := LoadKey(t.TempDir()); err == nil {
+	if _, _, _, err := LoadKey(t.TempDir()); err == nil {
 		t.Fatal("short key must be rejected")
+	}
+}
+
+func TestLoadKeyReportsSource(t *testing.T) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		t.Fatal(err)
+	}
+	enc := base64.StdEncoding.EncodeToString(raw)
+	t.Setenv("DBYSON_MASTER_KEY", enc)
+	t.Setenv("DBYSON_MASTER_KEY_FILE", "")
+	if _, src, _, err := LoadKey(t.TempDir()); err != nil || src != SourceEnv {
+		t.Fatalf("env key must report env source: %v %q", err, src)
 	}
 }
 

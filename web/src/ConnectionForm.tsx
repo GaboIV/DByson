@@ -20,6 +20,7 @@ interface Props {
   initial?: Partial<ConnectionInput>;
   onSaved: (c: Connection) => void;
   onCancel: () => void;
+  canShare?: boolean;
 }
 const steps = ["Destino", "Ruta y SSH", "Protección", "Comprobar"];
 const normalizeSSH = (c?: SSHConfig): SSHConfig => ({
@@ -183,7 +184,7 @@ interface SSHTrust {
   error?: string;
 }
 
-export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) {
+export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare }: Props) {
   const { copy, copyNotice } = useClipboard();
   const [draft, setDraft] = useState<ConnectionInput>(() => ({
     name: existing?.name || "",
@@ -194,6 +195,7 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
     database: existing?.database || "",
     tlsMode: existing?.tlsMode || "verify_identity",
     readOnly: existing?.readOnly || false,
+    shared: existing?.shared || false,
     ssh: normalizeSSH(existing?.ssh),
     ...initial,
   }));
@@ -672,6 +674,15 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel }: Props) 
               Solo lectura
             </label>
             <p className="muted">Bloquea las operaciones de escritura desde DByson y refuerza la sesión MySQL.</p>
+            {canShare && (
+              <>
+                <label className="check">
+                  <input type="checkbox" checked={draft.shared || false} onChange={(e) => update({ shared: e.target.checked })} />
+                  Compartida con el equipo
+                </label>
+                <p className="muted">Visible para quien reciba acceso. Los permisos por persona se gestionan con la API de grants.</p>
+              </>
+            )}
           </>
         )}
         {step === 3 && (

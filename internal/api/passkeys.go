@@ -341,6 +341,12 @@ func (s *Server) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := user.(*passkeyUser)
+	var disabled bool
+	if err := s.Store.DB.QueryRowContext(r.Context(), `SELECT disabled FROM users WHERE id = ?`, u.id).Scan(&disabled); err != nil || disabled {
+		writeError(w, 401, "passkey authentication failed")
+		s.record(r.Context(), audit.Entry{Action: "auth.passkey.login", IP: clientIP(r), Outcome: audit.OutcomeDenied})
+		return
+	}
 	raw, _ := json.Marshal(credential)
 	// Compare-and-swap prevents a concurrent login overwriting a newer signature counter.
 	result, err := s.Store.DB.ExecContext(r.Context(), `UPDATE passkeys SET credential=? WHERE id=? AND user_id=? AND credential=?`, raw, base64.RawURLEncoding.EncodeToString(credential.ID), u.id, stored)

@@ -22,6 +22,20 @@ func TestResolveMFAPolicy(t *testing.T) {
 	}
 }
 
+func TestPathInside(t *testing.T) {
+	for path, want := range map[string]bool{
+		"data/master.key":      true,
+		"data/sub/secret":      true,
+		"other/secret":         false,
+		"../outside":           false,
+		"data/../other/secret": false,
+	} {
+		if got := pathInside("data", path); got != want {
+			t.Errorf("pathInside(data, %q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
 func TestIsLoopback(t *testing.T) {
 	for addr, want := range map[string]bool{
 		"127.0.0.1:8080": true,

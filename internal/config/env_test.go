@@ -5,32 +5,32 @@ import (
 	"testing"
 )
 
-func TestNewNameWins(t *testing.T) {
+func TestGetReadsCurrentName(t *testing.T) {
 	t.Setenv("DBYSON_PROBE_A", "new")
-	t.Setenv("ADMINBASE_PROBE_A", "old")
 	if got := Get("PROBE_A"); got != "new" {
 		t.Fatalf("got %q", got)
 	}
-	if slices.Contains(Deprecated(), "ADMINBASE_PROBE_A") {
-		t.Fatal("overridden legacy name must not be reported")
-	}
 }
 
-func TestLegacyFallbackIsReported(t *testing.T) {
+func TestLegacyNameIsIgnored(t *testing.T) {
+	// Since v1.0 ADMINBASE_* is not read anymore.
 	t.Setenv("ADMINBASE_PROBE_B", "old")
-	if got := Get("PROBE_B"); got != "old" {
+	if got := Get("PROBE_B"); got != "" {
+		t.Fatalf("legacy variable leaked into config: %q", got)
+	}
+	if got := GetOr("PROBE_B", "default"); got != "default" {
 		t.Fatalf("got %q", got)
 	}
-	if !slices.Contains(Deprecated(), "ADMINBASE_PROBE_B") {
-		t.Fatal("legacy name in effect must be reported")
+	if !slices.Contains(LegacyPresent(), "ADMINBASE_PROBE_B") {
+		t.Fatal("set legacy name must be reported")
 	}
 }
 
-func TestExplicitEmptyNewNameDisablesFallback(t *testing.T) {
-	// Setting DBYSON_X="" on purpose must not silently pick up an old ADMINBASE_X.
-	t.Setenv("DBYSON_PROBE_C", "")
-	t.Setenv("ADMINBASE_PROBE_C", "old")
-	if got := GetOr("PROBE_C", "default"); got != "default" {
-		t.Fatalf("got %q", got)
+func TestLegacyPresentIgnoresCurrentNames(t *testing.T) {
+	t.Setenv("DBYSON_PROBE_C", "new")
+	for _, name := range LegacyPresent() {
+		if name == "DBYSON_PROBE_C" {
+			t.Fatal("current name reported as legacy")
+		}
 	}
 }

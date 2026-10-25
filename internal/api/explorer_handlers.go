@@ -16,10 +16,13 @@ import (
 )
 
 func (s *Server) openDB(ctx context.Context, r *http.Request, targetDB string) (*sql.DB, *connRecord, error) {
-	rec, sec, err := s.loadOwned(ctx, r)
+	rec, sec, err := s.loadConnection(ctx, r, GrantUse)
 	if err != nil {
 		return nil, nil, err
 	}
+	// Viewers are read-only on every connection: all write paths below refuse
+	// read-only connections, and the console rejects non-SELECT statements.
+	rec.ReadOnly = rec.ReadOnly || sessionFrom(r).Role == RoleViewer
 	if err := s.mfaGate(r, rec.Env, sec.SSH.Enabled); err != nil {
 		return nil, nil, err
 	}
