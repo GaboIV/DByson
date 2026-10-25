@@ -83,9 +83,30 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
   const confirm = useConfirm();
   const { preferences } = usePreferences();
   const storageKey = `dbyson:${session.username}`;
-  const [tabs, setTabs] = useState<WorkTab[]>(() => restore(storageKey + ":tabs"));
-  const [active, setActive] = useState("home");
-  const [visited, setVisited] = useState<string[]>([]);
+  const initialTabs = restore(storageKey + ":tabs");
+  const [tabs, setTabs] = useState<WorkTab[]>(() => initialTabs);
+  const [active, setActive] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(storageKey + ":activeTab");
+      if (saved && (saved === "home" || initialTabs.some((t) => t.id === saved))) {
+        return saved;
+      }
+    } catch {
+      /* ignore */
+    }
+    return "home";
+  });
+  const [visited, setVisited] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(storageKey + ":activeTab");
+      if (saved && saved !== "home" && initialTabs.some((t) => t.id === saved)) {
+        return [saved];
+      }
+    } catch {
+      /* ignore */
+    }
+    return [];
+  });
   const [connections, setConnections] = useState<Connection[]>([]);
   const [palette, setPalette] = useState(false);
   const [search, setSearch] = useState("");
@@ -98,7 +119,12 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
   const [mfa, setMfa] = useState(session.mfa);
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const seeds = useRef<Record<string, string>>({});
-  const lastPane = useRef<Record<string, string>>({});
+  const lastPane = useRef<Record<string, string>>(
+    initialTabs.reduce<Record<string, string>>((acc, t) => {
+      acc[t.groupId] = t.id;
+      return acc;
+    }, {}),
+  );
 
   useEffect(() => {
     const ask = () => setSecurity(true);
@@ -126,6 +152,14 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
       /* storage unavailable: tabs simply won't be restored */
     }
   }, [tabs, storageKey]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey + ":activeTab", active);
+    } catch {
+      /* ignore */
+    }
+  }, [active, storageKey]);
 
   const groups = [...new Map(tabs.map((t) => [t.groupId, tabs.find((p) => p.groupId === t.groupId)!])).values()];
   const current = tabs.find((t) => t.id === active);
