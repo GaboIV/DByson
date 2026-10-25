@@ -313,18 +313,26 @@ func GetTableSchema(ctx context.Context, db *sql.DB, database, table string) (*T
 	return schema, nil
 }
 
+// FilterCondition represents a single structured column filter condition.
+type FilterCondition struct {
+	Column   string `json:"col"`
+	Operator string `json:"op"`
+	Value    string `json:"val"`
+}
+
 // TableDataOptions specifies pagination, sorting and filtering.
 type TableDataOptions struct {
-	Offset      *int64 `json:"offset,omitempty"`
-	Page        int    `json:"page"`
-	PageSize    int    `json:"pageSize"`
-	SortColumn  string `json:"sortColumn"`
-	SortOrder   string `json:"sortOrder"` // ASC or DESC
-	FilterCol   string `json:"filterCol"`
-	FilterOp    string `json:"filterOp"` // LIKE, EQUALS, NOT_EQUALS, STARTS, GT, LT, IS_NULL, IS_NOT_NULL
-	FilterValue string `json:"filterValue"`
-	CustomWhere string `json:"customWhere"`
-	Columns     string `json:"columns"` // comma separated or empty for "*"
+	Offset      *int64            `json:"offset,omitempty"`
+	Page        int               `json:"page"`
+	PageSize    int               `json:"pageSize"`
+	SortColumn  string            `json:"sortColumn"`
+	SortOrder   string            `json:"sortOrder"` // ASC or DESC
+	FilterCol   string            `json:"filterCol"`
+	FilterOp    string            `json:"filterOp"` // LIKE, EQUALS, NOT_EQUALS, STARTS, GT, LT, IS_NULL, IS_NOT_NULL
+	FilterValue string            `json:"filterValue"`
+	Filters     []FilterCondition `json:"filters,omitempty"`
+	CustomWhere string            `json:"customWhere"`
+	Columns     string            `json:"columns"` // comma separated or empty for "*"
 }
 
 // GetTableData loads rows with case-insensitive and accent-insensitive search.
@@ -396,39 +404,59 @@ func tableWhere(ctx context.Context, db *sql.DB, database, table string, opts Ta
 	var whereClauses []string
 	var args []any
 
-	val := strings.TrimSpace(opts.FilterValue)
-	op := strings.ToUpper(strings.TrimSpace(opts.FilterOp))
-	if op == "" {
-		op = "LIKE"
+	filters := opts.Filters
+	if len(filters) == 0 {
+		filters = []FilterCondition{{
+			Column:   opts.FilterCol,
+			Operator: opts.FilterOp,
+			Value:    opts.FilterValue,
+		}}
 	}
 
-	if val != "" || op == "IS_NULL" || op == "IS_NOT_NULL" {
-		col := strings.TrimSpace(opts.FilterCol)
-		if col != "" && col != "_all_" {
-			clause, arg := buildFilterExpr(col, op, val)
-			if clause != "" {
-				whereClauses = append(whereClauses, clause)
-				if arg != nil {
-					args = append(args, arg)
-				}
-			}
-		} else if val != "" {
-			// Search across all text/char columns in table
-			cols, err := getTableColumnNames(ctx, db, database, table)
-			if err != nil {
-				return "", nil, err
-			}
-			if len(cols) > 0 {
-				var orClauses []string
-				for _, c := range cols {
-					clause, arg := buildFilterExpr(c, "LIKE", val)
-					if clause != "" {
-						orClauses = append(orClauses, clause)
+	var cols []string
+	var colsLoaded bool
+
+	for _, f := range filters {
+		val := strings.TrimSpace(f.Value)
+		op := strings.ToUpper(strings.TrimSpace(f.Operator))
+		if op == "" {
+			op = "LIKE"
+		}
+
+		if val != "" || op == "IS_NULL" || op == "IS_NOT_NULL" {
+			col := strings.TrimSpace(f.Column)
+			if col != "" && col != "_all_" {
+				clause, arg := buildFilterExpr(col, op, val)
+				if clause != "" {
+					whereClauses = append(whereClauses, clause)
+					if argSlice, ok := arg.([]any); ok {
+						args = append(args, argSlice...)
+					} else if arg != nil {
 						args = append(args, arg)
 					}
 				}
-				if len(orClauses) > 0 {
-					whereClauses = append(whereClauses, "("+strings.Join(orClauses, " OR ")+")")
+			} else if val != "" {
+				// Search across all text/char columns in table
+				if !colsLoaded {
+					var err error
+					cols, err = getTableColumnNames(ctx, db, database, table)
+					if err != nil {
+						return "", nil, err
+					}
+					colsLoaded = true
+				}
+				if len(cols) > 0 {
+					var orClauses []string
+					for _, c := range cols {
+						clause, arg := buildFilterExpr(c, "LIKE", val)
+						if clause != "" {
+							orClauses = append(orClauses, clause)
+							args = append(args, arg)
+						}
+					}
+					if len(orClauses) > 0 {
+						whereClauses = append(whereClauses, "("+strings.Join(orClauses, " OR ")+")")
+					}
 				}
 			}
 		}
@@ -512,11 +540,13 @@ func buildFilterExpr(column string, op string, val string) (string, any) {
 		// Split comma-separated values into parameters
 		items := strings.Split(val, ",")
 		var placeholders []string
-		for range items {
+		var inArgs []any
+		for _, item := range items {
 			placeholders = append(placeholders, "?")
+			inArgs = append(inArgs, strings.TrimSpace(item))
 		}
 		if len(placeholders) > 0 {
-			return fmt.Sprintf("%s IN (%s)", EscapeIdent(column), strings.Join(placeholders, ",")), val
+			return fmt.Sprintf("%s IN (%s)", EscapeIdent(column), strings.Join(placeholders, ",")), inArgs
 		}
 		return fmt.Sprintf("%s = ?", EscapeIdent(column)), val
 	case "IS_NULL":

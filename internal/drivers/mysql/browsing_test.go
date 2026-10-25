@@ -51,3 +51,26 @@ func TestCancelledBrowsingAndInvalidOffset(t *testing.T) {
 		t.Fatal("negative offset accepted")
 	}
 }
+
+func TestMultipleFilterConditionsBuildCombinedWhere(t *testing.T) {
+	db, f := fixtureDB(t, 1, "value")
+	_, err := GetTableData(context.Background(), db, "db", "t", TableDataOptions{
+		PageSize: 10,
+		Filters: []FilterCondition{
+			{Column: "code", Operator: "=", Value: "A1"},
+			{Column: "year", Operator: ">=", Value: "2026"},
+			{Column: "deleted_at", Operator: "IS_NULL", Value: ""},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.queries) != 1 {
+		t.Fatalf("expected 1 query, got %v", f.queries)
+	}
+	q := f.queries[0]
+	if !strings.Contains(q, "`code`") || !strings.Contains(q, "`year` >= ?") || !strings.Contains(q, "`deleted_at` IS NULL") || strings.Count(q, " AND ") != 2 {
+		t.Fatalf("unexpected WHERE clause in query: %s", q)
+	}
+}
+

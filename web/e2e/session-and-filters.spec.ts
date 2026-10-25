@@ -191,6 +191,66 @@ test("Filtros: barra unida, padding lateral, separadores y desplegables del tema
   expect(errors).toEqual([]);
 });
 
+test("Filtros múltiples: agrega hasta 3 líneas en panel flotante sin aumentar alto de barra y luego abre modal", async ({ page }) => {
+  const state = await fixture(page);
+  const initialBarHeight = (await page.locator(".adminer-filter-bar").boundingBox())!.height;
+  await expect(page.locator(".filter-condition-row")).toHaveCount(1);
+
+  await page.getByRole("combobox", { name: "Columna (o donde sea)", exact: true }).click();
+  await page.getByRole("option", { name: "Code", exact: true }).click();
+  await page.getByRole("textbox", { name: "Valor de búsqueda", exact: true }).fill("100");
+
+  await page.getByRole("button", { name: "Agregar condición", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Condiciones adicionales" })).toBeVisible();
+  await expect(page.locator(".filter-condition-row")).toHaveCount(2);
+  await page.getByRole("combobox", { name: "Columna de condición 2", exact: true }).click();
+  await page.getByRole("option", { name: "AnnualExercise", exact: true }).click();
+  await page.getByRole("textbox", { name: "Valor de condición 2", exact: true }).fill("2026");
+
+  await page.getByRole("button", { name: "Agregar condición", exact: true }).click();
+  await expect(page.locator(".filter-condition-row")).toHaveCount(3);
+  await page.getByRole("combobox", { name: "Columna de condición 3", exact: true }).click();
+  await page.getByRole("option", { name: "IsAvailable", exact: true }).click();
+  await page.getByRole("textbox", { name: "Valor de condición 3", exact: true }).fill("1");
+
+  // La barra principal mantiene su altura de 1 sola línea sin empujar la tabla
+  const barHeightWithPopover = (await page.locator(".adminer-filter-bar").boundingBox())!.height;
+  expect(Math.abs(barHeightWithPopover - initialBarHeight)).toBeLessThan(2);
+
+  // Al hacer clic en + con 3 condiciones ya configuradas, se levanta el modal con los filtros configurados hasta ahora
+  await page.getByRole("button", { name: "Agregar condición", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Condiciones adicionales" })).toHaveCount(0);
+  const modal = page.getByRole("dialog", { name: "Condiciones de filtro" });
+  await expect(modal).toBeVisible();
+  await expect(modal.locator(".filters-modal-row")).toHaveCount(3);
+  await expect(modal.getByRole("textbox", { name: "Valor del filtro 1", exact: true })).toHaveValue("100");
+  await expect(modal.getByRole("textbox", { name: "Valor del filtro 2", exact: true })).toHaveValue("2026");
+  await expect(modal.getByRole("textbox", { name: "Valor del filtro 3", exact: true })).toHaveValue("1");
+
+  // Agregar una cuarta condición dentro del modal y aplicar
+  await modal.getByRole("button", { name: "+ Agregar condición", exact: true }).click();
+  await expect(modal.locator(".filters-modal-row")).toHaveCount(4);
+  await modal.getByRole("combobox", { name: "Columna del filtro 4", exact: true }).click();
+  await page.getByRole("option", { name: "DocumentId", exact: true }).click();
+  await modal.getByRole("textbox", { name: "Valor del filtro 4", exact: true }).fill("8");
+
+  const prevCount = state.dataRequests.length;
+  await modal.getByRole("button", { name: "Aplicar filtros", exact: true }).click();
+  await expect(modal).toHaveCount(0);
+  await expect.poll(() => state.dataRequests.length).toBe(prevCount + 1);
+
+  const lastParams = state.dataRequests.at(-1)!.searchParams;
+  expect(lastParams.get("filterCol")).toBe("Code");
+  expect(lastParams.get("filterVal")).toBe("100");
+  expect(JSON.parse(lastParams.get("filters") || "[]")).toEqual([
+    { col: "Code", op: "LIKE", val: "100" },
+    { col: "AnnualExercise", op: "LIKE", val: "2026" },
+    { col: "IsAvailable", op: "LIKE", val: "1" },
+    { col: "DocumentId", op: "LIKE", val: "8" },
+  ]);
+  await expect(page.getByRole("button", { name: "+3", exact: true })).toBeVisible();
+});
+
 test("Sesión vencida: salir del espacio, mostrar aviso y volver a autenticar sin bucle", async ({ page }, info) => {
   const state = await fixture(page);
   state.expired = true;

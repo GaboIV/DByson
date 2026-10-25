@@ -238,6 +238,7 @@ func (s *Server) handleTableData(w http.ResponseWriter, r *http.Request) {
 		FilterCol:   filterCol,
 		FilterOp:    filterOp,
 		FilterValue: filterVal,
+		Filters:     parseFilterConditions(r),
 		CustomWhere: customWhere,
 		Columns:     columns,
 	}
@@ -265,6 +266,35 @@ func (s *Server) handleTableData(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, data)
 }
 
+func parseFilterConditions(r *http.Request) []mysql.FilterCondition {
+	if raw := strings.TrimSpace(r.URL.Query().Get("filters")); raw != "" {
+		var filters []mysql.FilterCondition
+		if err := json.Unmarshal([]byte(raw), &filters); err == nil && len(filters) > 0 {
+			return filters
+		}
+	}
+	cols := r.URL.Query()["filterCol"]
+	ops := r.URL.Query()["filterOp"]
+	vals := r.URL.Query()["filterVal"]
+	n := max(len(cols), len(ops), len(vals))
+	if n <= 1 {
+		return nil
+	}
+	filters := make([]mysql.FilterCondition, n)
+	for i := range n {
+		if i < len(cols) {
+			filters[i].Column = cols[i]
+		}
+		if i < len(ops) {
+			filters[i].Operator = ops[i]
+		}
+		if i < len(vals) {
+			filters[i].Value = vals[i]
+		}
+	}
+	return filters
+}
+
 func (s *Server) handleTableCount(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
@@ -275,7 +305,13 @@ func (s *Server) handleTableCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer db.Close()
-	opts := mysql.TableDataOptions{FilterCol: r.URL.Query().Get("filterCol"), FilterOp: r.URL.Query().Get("filterOp"), FilterValue: r.URL.Query().Get("filterVal"), CustomWhere: r.URL.Query().Get("customWhere")}
+	opts := mysql.TableDataOptions{
+		FilterCol:   r.URL.Query().Get("filterCol"),
+		FilterOp:    r.URL.Query().Get("filterOp"),
+		FilterValue: r.URL.Query().Get("filterVal"),
+		Filters:     parseFilterConditions(r),
+		CustomWhere: r.URL.Query().Get("customWhere"),
+	}
 	start := time.Now()
 	total, query, err := mysql.CountTableRows(ctx, db, database, table, opts)
 	if err != nil {

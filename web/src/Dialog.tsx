@@ -27,6 +27,7 @@ export function Dialog({
       const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter((el) => el.getClientRects().length);
       if (dialogs.at(-1) !== root) return;
       if (e.key === "Escape") {
+        if (document.querySelector(".select-popover")) return;
         e.preventDefault();
         e.stopPropagation();
         close.current();

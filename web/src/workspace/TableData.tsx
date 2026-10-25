@@ -12,10 +12,16 @@ import { cellText, rowJSON } from "../clipboard";
 import { usePreferences } from "../Preferences";
 import { errorText, primaryKeyOf, rowValues, tablePath, writableValues, type Row, type ViewContext } from "./shared";
 
+const INLINE_FILTER_LIMIT = 3;
+
+export interface FilterCondition {
+  col: string;
+  op: string;
+  val: string;
+}
+
 interface Settings {
-  filterCol: string;
-  filterOp: string;
-  filterVal: string;
+  filters: FilterCondition[];
   sortCol: string;
   sortDesc: boolean;
   columns: string[]; // empty = all
@@ -23,16 +29,34 @@ interface Settings {
   textLength: number;
 }
 
+const defaultFilter = (): FilterCondition => ({
+  col: "",
+  op: "LIKE",
+  val: "",
+});
+
 const defaults = (): Settings => ({
-  filterCol: "",
-  filterOp: "LIKE",
-  filterVal: "",
+  filters: [defaultFilter()],
   sortCol: "",
   sortDesc: false,
   columns: [],
   limit: 50,
   textLength: 100,
 });
+
+function isFilterActive(f: FilterCondition): boolean {
+  return !!f.val.trim() || f.op === "IS_NULL" || f.op === "IS_NOT_NULL";
+}
+
+function appendFilterParams(params: URLSearchParams, filters: FilterCondition[]) {
+  const first = filters[0] ?? defaultFilter();
+  params.set("filterCol", first.col);
+  params.set("filterOp", first.op);
+  params.set("filterVal", first.val);
+  if (filters.length > 1) {
+    params.set("filters", JSON.stringify(filters));
+  }
+}
 
 const OPERATORS: [string, string][] = [
   ["=", "="],
@@ -71,6 +95,9 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
   const [applied, setApplied] = useState<Settings>(defaults);
   const [shownColumns, setShownColumns] = useState<string[]>([]);
   const [showColPicker, setShowColPicker] = useState(false);
+  const [showExtraFilters, setShowExtraFilters] = useState(false);
+  const [showFiltersModal, setShowFiltersModal] = useState(false);
+  const conditionsRef = useRef<HTMLDivElement>(null);
 
   const [page, setPage] = useState(1);
   const [pageOffsets, setPageOffsets] = useState([0]);
@@ -107,7 +134,7 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
   );
 
   const key = JSON.stringify([ctx.connection.id, ctx.database, ctx.table, offset, applied]);
-  const countScope = JSON.stringify([ctx.connection.id, ctx.database, ctx.table, applied.filterCol, applied.filterOp, applied.filterVal]);
+  const countScope = JSON.stringify([ctx.connection.id, ctx.database, ctx.table, applied.filters]);
 
   async function load() {
     if (!schema) return;
@@ -124,11 +151,9 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
         pageSize: String(applied.limit),
         sortCol: applied.sortCol || schema.primaryKey[0] || "",
         sortOrder: applied.sortDesc ? "DESC" : "ASC",
-        filterCol: applied.filterCol,
-        filterOp: applied.filterOp,
-        filterVal: applied.filterVal,
         columns: applied.columns.length ? applied.columns.join(",") : "*",
       });
+      appendFilterParams(params, applied.filters);
       const data = await api<QueryResult>("GET", `${tablePath(ctx)}/data?${params}`, undefined, { signal: controller.signal });
       if (controller.signal.aborted) return;
       setResult(data);
@@ -166,16 +191,56 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
     setPageOffsets([0]);
   }
 
-  function submitFilter(e: FormEvent) {
-    e.preventDefault();
+  useEffect(() => {
+    if (!showExtraFilters) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (conditionsRef.current?.contains(target)) return;
+      if (document.querySelector(".select-popover")?.contains(target)) return;
+      setShowExtraFilters(false);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !document.querySelector(".select-popover")) {
+        setShowExtraFilters(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showExtraFilters]);
+
+  function applyCurrentDraft() {
     if (schema && shownColumns.length === 0) {
       setError("Selecciona al menos una columna.");
-      return;
+      return false;
     }
     const columns = schema && shownColumns.length === schema.columns.length ? [] : shownColumns;
-    setApplied({ ...draft, columns, limit: Math.min(500, Math.max(1, draft.limit)) });
+    setApplied({
+      ...draft,
+      filters: draft.filters.map((f) => ({ ...f })),
+      columns,
+      limit: Math.min(500, Math.max(1, draft.limit)),
+    });
     resetPagination();
     setShowColPicker(false);
+    setShowExtraFilters(false);
+    return true;
+  }
+
+  function submitFilter(e: FormEvent) {
+    e.preventDefault();
+    applyCurrentDraft();
+  }
+
+  function applyFiltersFromModal(e: FormEvent) {
+    e.preventDefault();
+    if (applyCurrentDraft()) {
+      setShowFiltersModal(false);
+    }
   }
 
   function clearFilter() {
@@ -183,6 +248,37 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
     setShownColumns(schema?.columns.map((c) => c.field) ?? []);
     setApplied(defaults());
     resetPagination();
+    setShowExtraFilters(false);
+    setShowFiltersModal(false);
+  }
+
+  function updateCondition(index: number, patch: Partial<FilterCondition>) {
+    setDraft((d) => ({
+      ...d,
+      filters: d.filters.map((f, i) => (i === index ? { ...f, ...patch } : f)),
+    }));
+  }
+
+  function removeCondition(index: number) {
+    setDraft((d) => {
+      const next = d.filters.filter((_, i) => i !== index);
+      if (next.length <= 1) setShowExtraFilters(false);
+      return { ...d, filters: next.length > 0 ? next : [defaultFilter()] };
+    });
+  }
+
+  function handleAddConditionInline() {
+    if (draft.filters.length < INLINE_FILTER_LIMIT) {
+      setDraft((d) => ({ ...d, filters: [...d.filters, defaultFilter()] }));
+      setShowExtraFilters(true);
+    } else {
+      setShowExtraFilters(false);
+      setShowFiltersModal(true);
+    }
+  }
+
+  function addConditionInModal() {
+    setDraft((d) => ({ ...d, filters: [...d.filters, defaultFilter()] }));
   }
 
   function sortBy(col: string) {
@@ -199,7 +295,8 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
     setCounting(true);
     setCountError("");
     try {
-      const q = new URLSearchParams({ filterCol: applied.filterCol, filterOp: applied.filterOp, filterVal: applied.filterVal });
+      const q = new URLSearchParams();
+      appendFilterParams(q, applied.filters);
       const r = await api<{ totalRows: number }>("GET", `${tablePath(ctx)}/count?${q}`, undefined, { signal: controller.signal });
       if (!controller.signal.aborted) setExactTotal(r.totalRows);
     } catch (e) {
@@ -299,7 +396,10 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
   const hasAllColumns = schema.columns.every((c) => columns.includes(c.field));
   const pending =
     JSON.stringify({ ...draft, columns: shownColumns.length === allColumns.length ? [] : shownColumns }) !== JSON.stringify(applied);
-  const filtered = !!applied.filterVal || applied.filterOp === "IS_NULL" || applied.filterOp === "IS_NOT_NULL";
+  const filtered = applied.filters.some(isFilterActive);
+  const activeFilterValues = applied.filters.map((f) => f.val.trim()).filter(Boolean);
+  const firstFilter = draft.filters[0] ?? defaultFilter();
+  const extraInlineFilters = draft.filters.slice(1, INLINE_FILTER_LIMIT);
   const setDraftField = <K extends keyof Settings>(k: K, v: Settings[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
   return (
@@ -364,31 +464,135 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
           </div>
         </div>
 
-        <div className="filter-fieldset" role="group" aria-label="Condición">
+        <div className="filter-fieldset filter-fieldset-conditions" role="group" aria-label="Condición" ref={conditionsRef}>
           <span className="filter-label">Condición</span>
           <div className="fieldset-content">
-            <Select
-              className="filter-col-select"
-              value={draft.filterCol}
-              onChange={(value) => setDraftField("filterCol", value)}
-              label="Columna (o donde sea)"
-              options={[{ value: "", label: "(donde sea)" }, ...allColumns.map((c) => ({ value: c, label: c }))]}
-            />
-            <Select
-              className="filter-op-select"
-              value={draft.filterOp}
-              onChange={(value) => setDraftField("filterOp", value)}
-              label="Operador de búsqueda"
-              options={OPERATORS.map(([value, label]) => ({ value, label }))}
-            />
-            {draft.filterOp !== "IS_NULL" && draft.filterOp !== "IS_NOT_NULL" && (
-              <input
-                type="text"
-                className="filter-val-input"
-                placeholder="Valor…"
-                value={draft.filterVal}
-                onChange={(e) => setDraftField("filterVal", e.target.value)}
+            <div className="filter-condition-row">
+              <Select
+                className="filter-col-select"
+                value={firstFilter.col}
+                onChange={(value) => updateCondition(0, { col: value })}
+                label="Columna (o donde sea)"
+                options={[{ value: "", label: "(donde sea)" }, ...allColumns.map((c) => ({ value: c, label: c }))]}
               />
+              <Select
+                className="filter-op-select"
+                value={firstFilter.op}
+                onChange={(value) => updateCondition(0, { op: value })}
+                label="Operador de búsqueda"
+                options={OPERATORS.map(([value, label]) => ({ value, label }))}
+              />
+              {firstFilter.op !== "IS_NULL" && firstFilter.op !== "IS_NOT_NULL" && (
+                <input
+                  type="text"
+                  className="filter-val-input"
+                  placeholder="Valor…"
+                  aria-label="Valor de búsqueda"
+                  value={firstFilter.val}
+                  onChange={(e) => updateCondition(0, { val: e.target.value })}
+                />
+              )}
+              <button
+                type="button"
+                className="btn-filter-add"
+                onClick={handleAddConditionInline}
+                title={
+                  draft.filters.length < INLINE_FILTER_LIMIT ? "Agregar condición" : "Ver todos los filtros configurados y agregar más"
+                }
+                aria-label="Agregar condición"
+              >
+                +
+              </button>
+              {draft.filters.length > 1 && (
+                <button
+                  type="button"
+                  className={`btn-filter-more-count${showExtraFilters ? " is-open" : ""}`}
+                  onClick={() => {
+                    if (draft.filters.length <= INLINE_FILTER_LIMIT) {
+                      setShowExtraFilters((v) => !v);
+                    } else {
+                      setShowFiltersModal(true);
+                    }
+                  }}
+                  title={
+                    draft.filters.length <= INLINE_FILTER_LIMIT
+                      ? "Mostrar u ocultar líneas adicionales de filtro"
+                      : `Ver los ${draft.filters.length} filtros configurados`
+                  }
+                  aria-expanded={draft.filters.length <= INLINE_FILTER_LIMIT ? showExtraFilters : undefined}
+                >
+                  +{draft.filters.length - 1}
+                </button>
+              )}
+            </div>
+
+            {showExtraFilters && extraInlineFilters.length > 0 && (
+              <div className="conditions-popover" role="region" aria-label="Condiciones adicionales">
+                <header className="conditions-popover-header">
+                  <span>
+                    Condiciones adicionales ({draft.filters.length}/{INLINE_FILTER_LIMIT})
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-tiny"
+                    onClick={() => setShowExtraFilters(false)}
+                    aria-label="Cerrar condiciones adicionales"
+                  >
+                    ✕
+                  </button>
+                </header>
+                <div className="conditions-popover-list">
+                  {extraInlineFilters.map((cond, offsetIdx) => {
+                    const idx = offsetIdx + 1;
+                    return (
+                      <div key={idx} className="filter-condition-row">
+                        <span className="cond-popover-join mono">AND</span>
+                        <Select
+                          className="filter-col-select"
+                          value={cond.col}
+                          onChange={(value) => updateCondition(idx, { col: value })}
+                          label={`Columna de condición ${idx + 1}`}
+                          options={[{ value: "", label: "(donde sea)" }, ...allColumns.map((c) => ({ value: c, label: c }))]}
+                        />
+                        <Select
+                          className="filter-op-select"
+                          value={cond.op}
+                          onChange={(value) => updateCondition(idx, { op: value })}
+                          label={`Operador de condición ${idx + 1}`}
+                          options={OPERATORS.map(([value, label]) => ({ value, label }))}
+                        />
+                        {cond.op !== "IS_NULL" && cond.op !== "IS_NOT_NULL" && (
+                          <input
+                            type="text"
+                            className="filter-val-input"
+                            placeholder="Valor…"
+                            aria-label={`Valor de condición ${idx + 1}`}
+                            value={cond.val}
+                            onChange={(e) => updateCondition(idx, { val: e.target.value })}
+                          />
+                        )}
+                        <button
+                          type="button"
+                          className="btn-filter-remove"
+                          onClick={() => removeCondition(idx)}
+                          title={`Quitar condición ${idx + 1}`}
+                          aria-label={`Quitar condición ${idx + 1}`}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <footer className="conditions-popover-footer">
+                  <button type="button" className="btn-tiny" onClick={handleAddConditionInline}>
+                    {draft.filters.length < INLINE_FILTER_LIMIT ? "+ Otra línea" : "Ver todas en modal…"}
+                  </button>
+                  <button type="submit" className="primary btn-tiny">
+                    Mostrar
+                  </button>
+                </footer>
+              </div>
             )}
           </div>
         </div>
@@ -509,9 +713,9 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
                         <div className="empty-search-box">
                           <p>
                             🔍 No se encontraron registros con los filtros aplicados
-                            {applied.filterVal && (
+                            {activeFilterValues.length > 0 && (
                               <>
-                                : <strong>"{applied.filterVal}"</strong>
+                                : <strong>"{activeFilterValues.join(", ")}"</strong>
                               </>
                             )}
                             .
@@ -690,6 +894,73 @@ export function TableData({ ctx, schema, schemaError, onInsert, onDirtyChange }:
         </div>
       </div>
 
+      {showFiltersModal && (
+        <Dialog title="Condiciones de filtro" onClose={() => setShowFiltersModal(false)} className="filters-modal-dialog">
+          <form onSubmit={applyFiltersFromModal} className="filters-modal-form">
+            <p className="muted">
+              Configura las condiciones de filtrado para <strong>{ctx.table}</strong>. Todas las condiciones activas se combinan con{" "}
+              <code>AND</code>.
+            </p>
+            <div className="filters-modal-list">
+              {draft.filters.map((cond, idx) => (
+                <div key={idx} className="filters-modal-row">
+                  <span className="filters-modal-index mono">#{idx + 1}</span>
+                  <Select
+                    className="filters-modal-col"
+                    value={cond.col}
+                    onChange={(value) => updateCondition(idx, { col: value })}
+                    label={`Columna del filtro ${idx + 1}`}
+                    options={[{ value: "", label: "(donde sea)" }, ...allColumns.map((c) => ({ value: c, label: c }))]}
+                  />
+                  <Select
+                    className="filters-modal-op"
+                    value={cond.op}
+                    onChange={(value) => updateCondition(idx, { op: value })}
+                    label={`Operador del filtro ${idx + 1}`}
+                    options={OPERATORS.map(([value, label]) => ({ value, label }))}
+                  />
+                  {cond.op !== "IS_NULL" && cond.op !== "IS_NOT_NULL" ? (
+                    <input
+                      type="text"
+                      className="filters-modal-val"
+                      placeholder="Valor…"
+                      aria-label={`Valor del filtro ${idx + 1}`}
+                      value={cond.val}
+                      onChange={(e) => updateCondition(idx, { val: e.target.value })}
+                    />
+                  ) : (
+                    <span className="filters-modal-null-placeholder muted">Sin valor requerido</span>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-tiny danger"
+                    onClick={() => removeCondition(idx)}
+                    title={`Eliminar condición ${idx + 1}`}
+                    aria-label={`Eliminar condición ${idx + 1}`}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button type="button" className="align-start" onClick={addConditionInModal}>
+              + Agregar condición
+            </button>
+            <div className="actions filters-modal-actions">
+              <button type="button" onClick={() => setDraft((d) => ({ ...d, filters: [defaultFilter()] }))}>
+                Limpiar condiciones
+              </button>
+              <div className="spacer" />
+              <button type="button" onClick={() => setShowFiltersModal(false)}>
+                Cerrar
+              </button>
+              <button type="submit" className="primary">
+                Aplicar filtros
+              </button>
+            </div>
+          </form>
+        </Dialog>
+      )}
       {detail && <RecordDetail snapshot={detail} ctx={ctx} onClose={() => setDetail(null)} />}
       {editing && (
         <Dialog
