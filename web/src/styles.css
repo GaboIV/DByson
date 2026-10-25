@@ -2302,7 +2302,7 @@ td:hover .cell-copy,
   min-height: var(--workspace-filter-height);
   border-radius: 0;
   border-width: 0 0 1px;
-  padding: 0.175rem 0.5rem;
+  padding: 0 0.5rem;
   gap: 0;
   align-items: center;
   align-content: center;
