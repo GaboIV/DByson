@@ -2284,7 +2284,8 @@ td:hover .cell-copy,
 
 .sidebar-search {
   padding-block: 0;
-  margin-top: 1px;
+  /* Sigue la primera línea de la banda de filtros (su padding superior + este ajuste). */
+  margin-top: calc(0.25rem + 1px);
 }
 
 .sidebar-tools {
