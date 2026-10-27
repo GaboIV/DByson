@@ -73,4 +73,3 @@ func TestMultipleFilterConditionsBuildCombinedWhere(t *testing.T) {
 		t.Fatalf("unexpected WHERE clause in query: %s", q)
 	}
 }
-

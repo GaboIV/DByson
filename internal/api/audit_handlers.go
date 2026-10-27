@@ -34,6 +34,8 @@ var actionNames = map[string]string{
 	"PUT /api/connections/{id}":                                             "connection.update",
 	"DELETE /api/connections/{id}":                                          "connection.delete",
 	"GET /api/connections/{id}/grants":                                      "connection.grants.list",
+	"GET /api/connections/{id}/grants/users":                                "connection.grants.candidates",
+	"PUT /api/connections/{id}/sharing":                                     "connection.sharing.update",
 	"POST /api/connections/{id}/grants":                                     "connection.grant.create",
 	"DELETE /api/connections/{id}/grants/{userID}":                          "connection.grant.delete",
 	"GET /api/users":                                                        "user.list",

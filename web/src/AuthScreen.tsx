@@ -10,17 +10,23 @@ interface Props {
   onSession: (s: Session) => void;
 }
 
+const SSO_MFA = "sso-cookie";
+
 export function AuthScreen({ mode, needsToken, onSession, notice }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [mfaToken, setMfaToken] = useState("");
+  // After an SSO sign-in that still needs this account's second factor, the
+  // challenge lives in an HttpOnly cookie: the form posts only the code.
+  const ssoParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const [mfaToken, setMfaToken] = useState(mode === "login" && ssoParams.get("sso") === "mfa" ? SSO_MFA : "");
   const [code, setCode] = useState("");
   const [passkeys, setPasskeys] = useState(false);
   const [sso, setSso] = useState<OIDCStatus | null>(null);
-  const ssoFailed = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("sso") === "error";
+  const ssoFailed = ssoParams.get("sso") === "error";
+  const showCredentials = mode === "setup" || sso?.credentialsEnabled !== false;
   useEffect(() => {
     const controller = new AbortController();
     if (mode === "login") {
@@ -40,7 +46,7 @@ export function AuthScreen({ mode, needsToken, onSession, notice }: Props) {
     setError("");
     try {
       const res = mfaToken
-        ? await api<LoginResponse>("POST", "/api/auth/mfa/verify", { mfaToken, code })
+        ? await api<LoginResponse>("POST", "/api/auth/mfa/verify", mfaToken === SSO_MFA ? { code } : { mfaToken, code })
         : await api<LoginResponse>("POST", mode === "setup" ? "/api/setup" : "/api/auth/login", {
             username,
             password,
@@ -52,6 +58,7 @@ export function AuthScreen({ mode, needsToken, onSession, notice }: Props) {
         return;
       }
       setCsrf(res.csrf);
+      if (ssoParams.has("sso")) window.history.replaceState(null, "", "/");
       onSession(res);
     } catch (err) {
       // An expired or exhausted challenge sends the user back to the password step.
@@ -136,22 +143,26 @@ export function AuthScreen({ mode, needsToken, onSession, notice }: Props) {
         )}
 
         <p className="muted">{mode === "setup" ? "Crea la cuenta de administrador para empezar." : "Inicia sesión para continuar."}</p>
-        <label>
-          Usuario
-          <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required autoFocus />
-        </label>
-        <label>
-          Contraseña
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete={mode === "setup" ? "new-password" : "current-password"}
-            minLength={mode === "setup" ? 12 : undefined}
-            required
-          />
-          {mode === "setup" && <small className="muted">Mínimo 12 caracteres.</small>}
-        </label>
+        {showCredentials && (
+          <>
+            <label>
+              Usuario
+              <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required autoFocus />
+            </label>
+            <label>
+              Contraseña
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={mode === "setup" ? "new-password" : "current-password"}
+                minLength={mode === "setup" ? 12 : undefined}
+                required
+              />
+              {mode === "setup" && <small className="muted">Mínimo 12 caracteres.</small>}
+            </label>
+          </>
+        )}
         {mode === "setup" && needsToken && (
           <label>
             Token de instalación
@@ -164,20 +175,34 @@ export function AuthScreen({ mode, needsToken, onSession, notice }: Props) {
             {error}
           </p>
         )}
-        <button className="primary" disabled={busy}>
-          {mode === "setup" ? "Crear administrador" : "Entrar"}
-        </button>
+        {showCredentials && (
+          <button className="primary" disabled={busy}>
+            {mode === "setup" ? "Crear administrador" : "Entrar"}
+          </button>
+        )}
         {mode === "login" && ssoFailed && (
           <p className="error" role="alert">
-            {new URLSearchParams(window.location.search).get("reason") === "provisioned"
+            {ssoParams.get("reason") === "provisioned"
               ? "Tu identidad es válida pero no tiene cuenta vinculada. Pide a una persona administradora que te dé acceso."
-              : "No se pudo entrar con SSO. Inténtalo de nuevo o usa tu usuario y contraseña."}
+              : ssoParams.get("reason") === "domain"
+                ? "Tu cuenta del proveedor no pertenece a un dominio autorizado en este servidor."
+                : showCredentials
+                  ? "No se pudo entrar con SSO. Inténtalo de nuevo o usa tu usuario y contraseña."
+                  : "No se pudo entrar con Google. Inténtalo de nuevo o contacta con la administración."}
           </p>
         )}
         {mode === "login" && sso?.enabled && (
-          <button type="button" disabled={busy} onClick={() => (window.location.href = "/api/auth/oidc/login")}>
-            Entrar con {sso.provider || "SSO"}
-          </button>
+          <div className="sso-signin">
+            <button
+              type="button"
+              className={sso.google ? "google-signin" : undefined}
+              disabled={busy}
+              onClick={() => (window.location.href = "/api/auth/oidc/login")}
+            >
+              {sso.google ? "Continuar con Google" : `Entrar con ${sso.provider || "SSO"}`}
+            </button>
+            {sso.google && <small className="muted">Usa tu cuenta corporativa de Google Workspace.</small>}
+          </div>
         )}
         {mode === "login" && passkeys && passkeysSupported() && (
           <button

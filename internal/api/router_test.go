@@ -49,6 +49,8 @@ type client struct {
 	env    *testEnv
 	cookie *http.Cookie
 	csrf   string
+	// other short-lived cookies (SSO state, pending 2FA), kept like a browser would
+	jar map[string]*http.Cookie
 }
 
 func (e *testEnv) client() *client { return &client{env: e} }
@@ -66,14 +68,25 @@ func (c *client) do(method, path string, body any) *httptest.ResponseRecorder {
 	if c.cookie != nil {
 		req.AddCookie(c.cookie)
 	}
+	for _, ck := range c.jar {
+		req.AddCookie(ck)
+	}
 	if c.csrf != "" {
 		req.Header.Set("X-CSRF-Token", c.csrf)
 	}
 	rec := httptest.NewRecorder()
 	c.env.handler.ServeHTTP(rec, req)
 	for _, ck := range rec.Result().Cookies() {
-		if ck.Name == cookieName && ck.MaxAge >= 0 {
+		switch {
+		case ck.Name == cookieName && ck.MaxAge >= 0:
 			c.cookie = ck
+		case ck.Name != cookieName && ck.MaxAge < 0:
+			delete(c.jar, ck.Name)
+		case ck.Name != cookieName:
+			if c.jar == nil {
+				c.jar = map[string]*http.Cookie{}
+			}
+			c.jar[ck.Name] = ck
 		}
 	}
 	return rec

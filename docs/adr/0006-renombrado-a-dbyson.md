@@ -27,3 +27,7 @@ Renombrar ahora todo lo visible, con compatibilidad hacia atrás donde una insta
 - ✅ Las instalaciones existentes arrancan sin tocar su configuración ni su volumen.
 - ⚠️ La compatibilidad con `ADMINBASE_*` es código a retirar en la v1.0.
 - ⚠️ El nombre antiguo sobrevive en las etiquetas criptográficas; es intencional y está documentado.
+
+## Actualización (26 de octubre de 2026)
+
+La compatibilidad con `ADMINBASE_*` se retiró durante la Fase 4, antes de la v1.0: las variables antiguas ya no se leen y el arranque avisa de cuáles siguen definidas. El renombrado automático de `adminbase.db` se mantiene.

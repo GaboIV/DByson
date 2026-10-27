@@ -10,6 +10,7 @@ web/dist/*
 
 # Env / secrets
 .env
+deploy/google.env
 *.pem
 *.key
 *.p12

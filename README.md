@@ -42,12 +42,19 @@ Por defecto el binario escucha solo en `127.0.0.1:8080` (`DBYSON_LISTEN` para ca
 | `DBYSON_WEBAUTHN_RP_ID` / `DBYSON_WEBAUTHN_ORIGIN` | — | Dominio y origen HTTPS explícitos para passkeys; deben configurarse juntos. HTTP solo para localhost. |
 | `DBYSON_OIDC_ISSUER` / `DBYSON_OIDC_CLIENT_ID` / `DBYSON_OIDC_CLIENT_SECRET` | — | SSO OIDC (Google, Microsoft Entra ID, Keycloak). Requiere además `DBYSON_OIDC_REDIRECT_URL` (`.../api/auth/oidc/callback`). |
 | `DBYSON_OIDC_AUTO_PROVISION` | `false` | `true` crea una cuenta `member` al primer inicio SSO (vincula por email verificado si existe). |
+| `DBYSON_OIDC_ENABLED` / `DBYSON_CREDENTIALS_ENABLED` | `true` / `true` | Habilitan SSO configurado y acceso por contraseña. Deshabilitar contraseñas exige un SSO completo. |
+| `DBYSON_OIDC_CLIENT_SECRET_FILE` | — | Alternativa al secreto OAuth por variable; archivo privado, por ejemplo un Docker secret. |
 | `DBYSON_OIDC_NAME` | host del emisor | Etiqueta del botón de entrada con SSO. |
 | `DBYSON_AUDIT_RETENTION_DAYS` | `0` (conservar) | Purga al arrancar las entradas anteriores a N días, con anclaje `audit.purged`. |
 
 Generar una clave maestra: `openssl rand -base64 32`. Rotarla (servidor detenido): `dbyson rotate-key --data-dir /data --new-key-file /ruta/fuera/del/volumen`.
 
 ## Modos TLS hacia MySQL/MariaDB
+
+Para desplegar una imagen preconstruida desde GHCR sin compilar, usa
+[docker-compose.deploy.yml](docker-compose.deploy.yml) y
+[deploy.env.example](deploy.env.example). La configuración de Google, dominios,
+URL y secretos se define al arrancar: [guía de Google Workspace](docs/GOOGLE_WORKSPACE.md).
 
 `verify_identity` (por defecto) · `verify_ca` · `required` (cifra pero no autentica al servidor) · `disabled`.
 Acepta CA propia y certificado/clave de cliente. La prueba de conexión informa si la sesión quedó realmente cifrada.
@@ -107,7 +114,7 @@ El proyecto se llamó AdminBase. Desde esta versión todo usa el nombre DByson; 
 
 | Antes | Ahora | Compatibilidad |
 |---|---|---|
-| Variables `ADMINBASE_*` | `DBYSON_*` | Eliminadas en la v1.0: se ignoran y el log avisa de cuáles quitar. |
+| Variables `ADMINBASE_*` | `DBYSON_*` | Ya no se leen: se ignoran y el log avisa de cuáles renombrar. |
 | Archivo `adminbase.db` | `dbyson.db` | Se renombra solo al arrancar (con sus archivos `-wal`/`-shm`). |
 | Imagen `adminbase:dev`, binario `/adminbase`, volumen `adminbase-data` | `dbyson:dev`, `/dbyson`, `dbyson-data` | El volumen antiguo sirve tal cual: basta montarlo en `/data`. |
 | Cookie `ab_session` | `dbyson_session` | Hay que volver a iniciar sesión una vez. |

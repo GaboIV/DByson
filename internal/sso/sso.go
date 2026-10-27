@@ -7,6 +7,7 @@ package sso
 
 import (
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
@@ -31,10 +32,95 @@ type Config struct {
 	RedirectURL   string // this server's callback URL, registered at the provider
 	AutoProvision bool   // create a member account on first SSO sign-in
 	ProviderName  string // label shown in the UI; defaults to the issuer host
+	// AllowedDomains restricts SSO to verified emails in these domains. Required
+	// with AutoProvision: with a public issuer such as Google, any account in the
+	// world could otherwise create itself a member account.
+	AllowedDomains []string
+	// TrustMFA treats every SSO sign-in as two-factor: set it only when the
+	// provider enforces MFA for all users. Otherwise the ID token's amr claim
+	// decides, and accounts with local 2FA are asked for their code.
+	TrustMFA bool
 }
 
 // Enabled reports whether SSO was configured at all.
 func (c Config) Enabled() bool { return c.Issuer != "" && c.ClientID != "" && c.ClientSecret != "" }
+
+// Validate rejects configurations that would let unexpected people in.
+func (c Config) Validate() error {
+	if c.Enabled() && c.AutoProvision && len(c.AllowedDomains) == 0 {
+		return fmt.Errorf("DBYSON_OIDC_AUTO_PROVISION requires DBYSON_OIDC_ALLOWED_DOMAINS")
+	}
+	for _, d := range c.AllowedDomains {
+		if d == "" || strings.ContainsAny(d, "@ /") {
+			return fmt.Errorf("invalid allowed SSO domain %q", d)
+		}
+	}
+	return nil
+}
+
+// EmailAllowed reports whether a verified email may sign in: always true without
+// an allowlist, otherwise its domain must be listed exactly (no subdomains).
+func (c Config) EmailAllowed(email string) bool {
+	if len(c.AllowedDomains) == 0 {
+		return true
+	}
+	_, domain, ok := strings.Cut(strings.ToLower(email), "@")
+	if !ok {
+		return false
+	}
+	for _, d := range c.AllowedDomains {
+		if domain == strings.ToLower(d) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsGoogle identifies Google's issuer, never a provider's editable display name.
+func (c Config) IsGoogle() bool { return c.Issuer == "https://accounts.google.com" }
+
+// IdentityAllowed applies the configured organization boundary to a verified ID
+// token. Google requires the signed hd claim: an email suffix alone does not
+// prove that an account is managed by Google Workspace.
+func (c Config) IdentityAllowed(claims *Claims) bool {
+	if len(c.AllowedDomains) == 0 {
+		return true
+	}
+	if !claims.EmailVerified || !c.EmailAllowed(claims.Email) {
+		return false
+	}
+	if c.IsGoogle() {
+		for _, domain := range c.AllowedDomains {
+			if strings.EqualFold(claims.HostedDomain, domain) {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
+// ParseDomains splits a comma-separated domain list.
+func ParseDomains(s string) []string {
+	var out []string
+	for _, d := range strings.Split(s, ",") {
+		if d = strings.ToLower(strings.TrimSpace(d)); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// NewPKCE returns a code verifier and its S256 challenge (RFC 7636).
+func NewPKCE() (verifier, challenge string, err error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", "", err
+	}
+	verifier = base64.RawURLEncoding.EncodeToString(b)
+	sum := sha256.Sum256([]byte(verifier))
+	return verifier, base64.RawURLEncoding.EncodeToString(sum[:]), nil
+}
 
 // Name returns the display label for the provider.
 func (c Config) Name() string {
@@ -112,19 +198,30 @@ func (p *Provider) getDiscovery() (*discoveryDoc, error) {
 	return p.discovery, nil
 }
 
-// AuthorizeURL starts the code flow: the browser is redirected there.
-func (p *Provider) AuthorizeURL(state, nonce string) (string, error) {
+// AuthorizeURL starts the code flow: the browser is redirected there. The PKCE
+// challenge binds the eventual code to this login attempt.
+func (p *Provider) AuthorizeURL(state, nonce, codeChallenge string) (string, error) {
 	doc, err := p.getDiscovery()
 	if err != nil {
 		return "", err
 	}
 	q := url.Values{
-		"response_type": {"code"},
-		"client_id":     {p.cfg.ClientID},
-		"redirect_uri":  {p.cfg.RedirectURL},
-		"scope":         {"openid email profile"},
-		"state":         {state},
-		"nonce":         {nonce},
+		"response_type":         {"code"},
+		"client_id":             {p.cfg.ClientID},
+		"redirect_uri":          {p.cfg.RedirectURL},
+		"scope":                 {"openid email profile"},
+		"state":                 {state},
+		"nonce":                 {nonce},
+		"code_challenge":        {codeChallenge},
+		"code_challenge_method": {"S256"},
+	}
+	if p.cfg.IsGoogle() {
+		q.Set("prompt", "select_account")
+		if len(p.cfg.AllowedDomains) == 1 {
+			q.Set("hd", p.cfg.AllowedDomains[0])
+		} else if len(p.cfg.AllowedDomains) > 1 {
+			q.Set("hd", "*")
+		}
 	}
 	return doc.AuthorizationEndpoint + "?" + q.Encode(), nil
 }
@@ -133,8 +230,8 @@ type tokenResponse struct {
 	IDToken string `json:"id_token"`
 }
 
-// Exchange trades an authorization code for an ID token.
-func (p *Provider) Exchange(code string) (string, error) {
+// Exchange trades an authorization code (and its PKCE verifier) for an ID token.
+func (p *Provider) Exchange(code, codeVerifier string) (string, error) {
 	doc, err := p.getDiscovery()
 	if err != nil {
 		return "", err
@@ -145,6 +242,7 @@ func (p *Provider) Exchange(code string) (string, error) {
 		"redirect_uri":  {p.cfg.RedirectURL},
 		"client_id":     {p.cfg.ClientID},
 		"client_secret": {p.cfg.ClientSecret},
+		"code_verifier": {codeVerifier},
 	}
 	resp, err := p.client.PostForm(doc.TokenEndpoint, form)
 	if err != nil {
@@ -169,8 +267,23 @@ type Claims struct {
 	Subject           string
 	Email             string
 	EmailVerified     bool
+	HostedDomain      string
 	PreferredUsername string
 	Name              string
+	AMR               []string // authentication methods (RFC 8176), when the provider reports them
+}
+
+// multiFactorAMR are the RFC 8176 values that mean a second factor was used.
+var multiFactorAMR = map[string]bool{"mfa": true, "otp": true, "hwk": true, "sms": true, "fpt": true, "face": true, "iris": true}
+
+// MFA reports whether the provider says this sign-in used a second factor.
+func (c *Claims) MFA() bool {
+	for _, m := range c.AMR {
+		if multiFactorAMR[strings.ToLower(m)] {
+			return true
+		}
+	}
+	return false
 }
 
 type rawClaims struct {
@@ -182,8 +295,10 @@ type rawClaims struct {
 	Nonce             string   `json:"nonce"`
 	Email             string   `json:"email"`
 	EmailVerified     bool     `json:"email_verified"`
+	HostedDomain      string   `json:"hd"`
 	PreferredUsername string   `json:"preferred_username"`
 	Name              string   `json:"name"`
+	AMR               []string `json:"amr"`
 }
 
 type audience []string
@@ -239,7 +354,7 @@ func (p *Provider) Verify(rawToken, nonce string) (*Claims, error) {
 		return nil, fmt.Errorf("oidc: bad claims: %w", err)
 	}
 	now := time.Now().Unix()
-	if claims.Issuer != p.cfg.Issuer {
+	if claims.Issuer != p.cfg.Issuer && !(p.cfg.IsGoogle() && claims.Issuer == "accounts.google.com") {
 		return nil, fmt.Errorf("oidc: issuer mismatch")
 	}
 	audOK := false
@@ -260,14 +375,16 @@ func (p *Provider) Verify(rawToken, nonce string) (*Claims, error) {
 	if claims.IssuedAt != 0 && claims.IssuedAt > now+300 {
 		return nil, fmt.Errorf("oidc: token issued in the future")
 	}
-	if nonce != "" && claims.Nonce != nonce {
+	if nonce == "" || claims.Nonce != nonce {
 		return nil, fmt.Errorf("oidc: nonce mismatch")
 	}
 	return &Claims{
 		Subject: claims.Subject, Email: strings.TrimSpace(claims.Email),
 		EmailVerified:     claims.EmailVerified,
+		HostedDomain:      claims.HostedDomain,
 		PreferredUsername: strings.TrimSpace(claims.PreferredUsername),
 		Name:              strings.TrimSpace(claims.Name),
+		AMR:               claims.AMR,
 	}, nil
 }
 
@@ -319,6 +436,9 @@ func (p *Provider) signingKey(kid string) (*rsa.PublicKey, error) {
 	return nil, fmt.Errorf("oidc: unknown key id %q", kid)
 }
 
+// minRSABits is the smallest signing key accepted from a JWKS document.
+const minRSABits = 2048
+
 func (p *Provider) fetchJWKS(jwksURI string) (map[string]*rsa.PublicKey, error) {
 	resp, err := p.client.Get(jwksURI)
 	if err != nil {
@@ -345,14 +465,19 @@ func (p *Provider) fetchJWKS(jwksURI string) (map[string]*rsa.PublicKey, error) 
 		if err != nil {
 			continue
 		}
+		// Reject keys too weak to trust and exponents that would overflow.
+		n := new(big.Int).SetBytes(nb)
+		if n.BitLen() < minRSABits || len(eb) == 0 || len(eb) > 4 {
+			continue
+		}
 		e := 0
 		for _, b := range eb {
 			e = e<<8 + int(b)
 		}
-		if e == 0 {
+		if e < 3 || e%2 == 0 {
 			continue
 		}
-		keys[k.Kid] = &rsa.PublicKey{N: new(big.Int).SetBytes(nb), E: e}
+		keys[k.Kid] = &rsa.PublicKey{N: n, E: e}
 	}
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("oidc jwks: no RSA keys")

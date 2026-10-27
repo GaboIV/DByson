@@ -444,8 +444,19 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
+	// After an SSO sign-in the challenge travels in an HttpOnly cookie instead of
+	// the response body, because the browser arrives through a redirect.
+	fromCookie := false
+	if in.Token == "" {
+		if c, err := r.Cookie(mfaPendingCookie); err == nil {
+			in.Token, fromCookie = c.Value, true
+		}
+	}
 	ch, ok := s.mfaPending.take(in.Token)
 	if !ok {
+		if fromCookie {
+			clearShortCookie(w, r, mfaPendingCookie, "/api/auth/mfa")
+		}
 		writeError(w, http.StatusUnauthorized, "La verificación expiró. Vuelve a iniciar sesión.")
 		return
 	}
@@ -477,6 +488,9 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mfaPending.done(in.Token)
+	if fromCookie {
+		clearShortCookie(w, r, mfaPendingCookie, "/api/auth/mfa")
+	}
 	s.record(r.Context(), e)
 	s.startSession(w, r, ch.userID, ch.username, ch.role, true)
 }

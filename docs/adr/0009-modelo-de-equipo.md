@@ -39,3 +39,38 @@ de compartir.
 - ⚠️ Cambia el contrato anterior: la administración ahora ve todos los
   perfiles (antes, ni siquiera otra administración los veía). Decisión
   consciente para la administración central; cubierta por pruebas.
+
+## Revisión (26 de octubre de 2026)
+
+Una revisión del código de esta fase encontró y corrigió:
+
+- **Escalada con `use`:** probar un borrador (`test-draft`) o pedir la huella SSH
+  con un perfil compartido reutilizaba la contraseña guardada aunque el host
+  fuera otro: con `use` bastaba apuntar a un servidor propio para recibirla.
+  Ahora exige `manage`, y para quien no es dueño ni `admin` las credenciales
+  guardadas solo viajan a su destino original; tampoco puede rebajar entorno,
+  solo lectura ni TLS de un perfil compartido.
+- **`viewer` dueño de `prod`:** la regla "nunca abre prod" se saltaba si el
+  `viewer` era el dueño (p. ej. un `member` degradado). Ahora aplica siempre.
+- **SSO:** `state` sin ligar al navegador (inicio de sesión forzado), sin PKCE,
+  auto-aprovisionamiento abierto a cualquier cuenta del emisor, vínculo por
+  email ambiguo (`LIMIT 1`, sensible a mayúsculas, solo con auto-aprovisionamiento)
+  y la 2FA local se saltaba al entrar por SSO. Ahora: cookie de `state`, PKCE,
+  `DBYSON_OIDC_ALLOWED_DOMAINS` (obligatorio para auto-aprovisionar), vínculo
+  solo con coincidencia única, y 2FA local exigida salvo MFA declarada por el
+  proveedor (`amr`) o `DBYSON_OIDC_TRUST_MFA`.
+- **Rotación:** secretos y auditoría se confirmaban en transacciones separadas
+  (la auditoría se verificaba *después* de re-cifrar) y la cadena se firmaba
+  con la clave maestra en lugar de la subclave de auditoría, así que fallaba en
+  cualquier instalación real. Ahora es una única transacción verificada, y la
+  clave nueva nunca va por la línea de comandos.
+- **Purga:** el ancla era `MAX(hash)` (orden alfabético, no la última entrada),
+  una purga parcial dejaba la cadena inverificable y se borraba por fecha (con
+  huecos si el reloj retrocedía). Ahora se borra un prefijo por id, el ancla es
+  correcta y la verificación acepta el inicio solo si una entrada
+  `audit.purged` firmada lo respalda.
+- **Usuarios:** la protección del último `admin` era *check-then-act* (dos
+  peticiones simultáneas podían dejar el servidor sin administración) y un
+  campo inválido podía cerrar sesiones sin aplicar el cambio. Ahora todo se
+  valida antes y se aplica en una transacción que comprueba el resultado.
+- **Interfaz de permisos:** añadida (••• → Permisos… en cada conexión compartida).

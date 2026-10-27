@@ -13,16 +13,24 @@ import (
 //
 //   - connections: the connection id
 //   - saved queries: "query/"+id (see savedQueries in internal/api)
-//   - TOTP seeds: "totp/"+userID (see totpVaultID in internal/api)
+//   - TOTP seeds: "totp:"+userID (see totpVaultID in internal/api)
 //
-// Run it offline with the server stopped; it takes no lock against a running
-// server. Rotation of the audit HMAC chain is audit.Rekey, not this function.
+// Run it offline with the server stopped. Key rotation calls RewrapSecretsTx
+// together with audit.RekeyTx in one transaction.
 func RewrapSecrets(ctx context.Context, db *sql.DB, oldV, newV *Vault) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := RewrapSecretsTx(ctx, tx, oldV, newV); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RewrapSecretsTx is RewrapSecrets inside an existing transaction; it does not commit.
+func RewrapSecretsTx(ctx context.Context, tx *sql.Tx, oldV, newV *Vault) error {
 
 	rewrap := func(table, idCol, idPrefix string) error {
 		q := fmt.Sprintf(`SELECT %s, wrapped_dek, secret FROM %s`, idCol, table)
@@ -71,10 +79,7 @@ func RewrapSecrets(ctx context.Context, db *sql.DB, oldV, newV *Vault) error {
 	if err := rewrap("saved_queries", "id", "query/"); err != nil {
 		return err
 	}
-	if err := rewrapTOTP(ctx, tx, oldV, newV); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return rewrapTOTP(ctx, tx, oldV, newV)
 }
 
 func rewrapTOTP(ctx context.Context, tx *sql.Tx, oldV, newV *Vault) error {

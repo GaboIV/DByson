@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -16,46 +17,41 @@ import (
 )
 
 // runRotateKey implements `dbyson rotate-key`: re-encrypts every stored secret
-// and re-signs the audit chain under a new master key. The server must be
-// stopped first; afterwards point DBYSON_MASTER_KEY (or _FILE) at the new key
-// and restart.
+// and re-signs the audit chain under a new master key, in a single transaction:
+// either everything moves to the new key or nothing changes. The server must be
+// stopped first (it keeps the old key in memory); afterwards point
+// DBYSON_MASTER_KEY_FILE at the new key and restart.
+//
+// The new key is read from --new-key-file, or generated into it when the file
+// does not exist. It is never taken from the command line, where it would end up
+// in shell history and process listings.
 func runRotateKey(log *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("rotate-key", flag.ContinueOnError)
 	dataDir := fs.String("data-dir", config.GetOr("DATA_DIR", "./data"), "directory holding dbyson.db")
-	newKeyB64 := fs.String("new-key", "", "new master key (base64, 32 bytes)")
-	newKeyFile := fs.String("new-key-file", "", "generate a new key and write it here (mode 0600)")
+	newKeyFile := fs.String("new-key-file", "", "file with the new master key (base64); generated with mode 0600 if missing")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if (*newKeyB64 == "") == (*newKeyFile == "") {
-		return fmt.Errorf("rotate-key needs exactly one of --new-key or --new-key-file")
+	if *newKeyFile == "" {
+		return fmt.Errorf("rotate-key needs --new-key-file")
 	}
-	for _, name := range []string{store.FileName, "adminbase.db"} {
-		if _, err := os.Stat(filepath.Join(*dataDir, name)); err == nil {
-			goto haveDB
-		}
+	if !hasDatabase(*dataDir) {
+		return fmt.Errorf("no database in %s: nothing to rotate", *dataDir)
 	}
-	return fmt.Errorf("no database in %s: nothing to rotate", *dataDir)
-haveDB:
 
-	oldKey, _, _, err := vault.LoadKey(*dataDir)
+	oldKey, _, oldPath, err := vault.LoadKey(*dataDir)
 	if err != nil {
 		return fmt.Errorf("load current master key: %w", err)
 	}
-	var newKey []byte
-	if *newKeyB64 != "" {
-		newKey, err = vault.DecodeKey(*newKeyB64)
-		if err != nil {
-			return err
-		}
-	} else {
-		newKey = make([]byte, 32)
-		if _, err := rand.Read(newKey); err != nil {
-			return err
-		}
-		if err := os.WriteFile(*newKeyFile, []byte(vault.EncodeKey(newKey)), 0o600); err != nil {
-			return fmt.Errorf("write new key file: %w", err)
-		}
+	newKey, generated, err := loadOrCreateKey(*newKeyFile)
+	if err != nil {
+		return err
+	}
+	if vault.Fingerprint(newKey) == vault.Fingerprint(oldKey) {
+		return fmt.Errorf("the new key is the current key: nothing to rotate")
+	}
+	if oldPath != "" && sameFile(oldPath, *newKeyFile) {
+		return fmt.Errorf("--new-key-file must not be the file holding the current key")
 	}
 	oldV, err := vault.New(oldKey)
 	if err != nil {
@@ -65,29 +61,85 @@ haveDB:
 	if err != nil {
 		return err
 	}
+
 	st, err := store.Open(*dataDir)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 	ctx := context.Background()
-	log.Info("rotating vault secrets", "old", vault.Fingerprint(oldKey), "new", vault.Fingerprint(newKey))
-	if err := vault.RewrapSecrets(ctx, st.DB, oldV, newV); err != nil {
-		return fmt.Errorf("rewrap secrets: %w", err)
+	log.Info("rotating master key", "old", vault.Fingerprint(oldKey), "new", vault.Fingerprint(newKey))
+
+	tx, err := st.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	if err := audit.Rekey(ctx, st.DB, oldKey, newKey); err != nil {
-		return fmt.Errorf("rekey audit chain: %w", err)
+	defer tx.Rollback()
+	// The audit chain is verified (and re-verified under the new key) inside
+	// RekeyTx; a broken chain aborts before anything is committed. The chain is
+	// signed with the audit subkey the server derives, never the master key itself.
+	if err := audit.RekeyTx(ctx, tx, oldV.DeriveKey("audit"), newV.DeriveKey("audit")); err != nil {
+		return rotationFailed(generated, *newKeyFile, err)
 	}
-	if v, err := audit.New(st.DB, newV.DeriveKey("audit")).Verify(ctx); err != nil || !v.OK {
-		return fmt.Errorf("post-rotation audit verification failed (checked %d): %w", v.Checked, err)
+	if err := vault.RewrapSecretsTx(ctx, tx, oldV, newV); err != nil {
+		return rotationFailed(generated, *newKeyFile, fmt.Errorf("rewrap secrets: %w", err))
 	}
-	log.Info("rotation complete",
-		"old", vault.Fingerprint(oldKey), "new", vault.Fingerprint(newKey))
+	if err := tx.Commit(); err != nil {
+		return rotationFailed(generated, *newKeyFile, err)
+	}
+
 	fmt.Printf("master key rotated %s -> %s\n", vault.Fingerprint(oldKey), vault.Fingerprint(newKey))
-	if *newKeyFile != "" {
-		fmt.Printf("new key written to %s; point DBYSON_MASTER_KEY_FILE at it and restart\n", *newKeyFile)
-	} else {
-		fmt.Println("point DBYSON_MASTER_KEY at the new key and restart")
+	fmt.Printf("now set DBYSON_MASTER_KEY_FILE=%s and restart the server\n", *newKeyFile)
+	if oldPath != "" && pathInside(*dataDir, oldPath) {
+		fmt.Printf("then delete the old key %s: it no longer decrypts anything\n", oldPath)
 	}
 	return nil
+}
+
+func hasDatabase(dir string) bool {
+	for _, name := range []string{store.FileName, "adminbase.db"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// loadOrCreateKey reads a base64 key from path, or generates one there (mode 0600,
+// refusing to overwrite) when the file does not exist.
+func loadOrCreateKey(path string) (key []byte, generated bool, err error) {
+	if b, err := os.ReadFile(path); err == nil {
+		key, err := vault.DecodeKey(string(b))
+		return key, false, err
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, false, fmt.Errorf("read new key file: %w", err)
+	}
+	key = make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, false, err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, false, fmt.Errorf("create new key file: %w", err)
+	}
+	if _, err := f.WriteString(vault.EncodeKey(key) + "\n"); err != nil {
+		f.Close()
+		return nil, false, err
+	}
+	return key, true, f.Close()
+}
+
+// rotationFailed removes a key file generated for a rotation that did not happen,
+// so nobody points the server at a key that decrypts nothing.
+func rotationFailed(generated bool, path string, err error) error {
+	if generated {
+		_ = os.Remove(path)
+	}
+	return fmt.Errorf("rotation aborted, nothing changed: %w", err)
+}
+
+func sameFile(a, b string) bool {
+	ia, errA := os.Stat(a)
+	ib, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(ia, ib)
 }

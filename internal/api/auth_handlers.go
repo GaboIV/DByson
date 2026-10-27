@@ -232,6 +232,11 @@ func tooManyAttempts(w http.ResponseWriter, wait time.Duration) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if s.PasswordLoginDisabled {
+		s.record(r.Context(), audit.Entry{IP: clientIP(r), Action: "auth.login", Outcome: audit.OutcomeDenied, Detail: "password sign-in disabled"})
+		writeError(w, http.StatusForbidden, "password sign-in is disabled; use the configured identity provider")
+		return
+	}
 	var in credentials
 	if !readJSON(w, r, &in) {
 		return

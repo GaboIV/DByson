@@ -20,14 +20,15 @@ import (
 
 // Deps are the collaborators the HTTP layer needs.
 type Deps struct {
-	WebAuthn   *webauthn.WebAuthn
-	Store      *store.Store
-	Vault      *vault.Vault
-	Policy     *policy.HostPolicy
-	SetupToken string // optional: required to create the first admin when set
-	Audit      *audit.Logger
-	MFAPolicy  string // off | sensitive | all (see mfa.go); empty means sensitive
-	OIDC       *sso.Provider
+	WebAuthn              *webauthn.WebAuthn
+	Store                 *store.Store
+	Vault                 *vault.Vault
+	Policy                *policy.HostPolicy
+	SetupToken            string // optional: required to create the first admin when set
+	Audit                 *audit.Logger
+	MFAPolicy             string // off | sensitive | all (see mfa.go); empty means sensitive
+	OIDC                  *sso.Provider
+	PasswordLoginDisabled bool
 }
 
 type Server struct {
@@ -124,6 +125,8 @@ func (s *Server) routes(assets fs.FS) http.Handler {
 	mux.Handle("POST /api/connections/{id}/test", s.requireAuth(s.testSavedConnection))
 
 	mux.Handle("GET /api/connections/{id}/grants", s.requireAuth(s.listGrants))
+	mux.Handle("GET /api/connections/{id}/grants/users", s.requireAuth(s.grantCandidates))
+	mux.Handle("PUT /api/connections/{id}/sharing", s.requireAuth(s.updateSharing))
 	mux.Handle("POST /api/connections/{id}/grants", s.requireAuth(s.createGrant))
 	mux.Handle("DELETE /api/connections/{id}/grants/{userID}", s.requireAuth(s.deleteGrant))
 

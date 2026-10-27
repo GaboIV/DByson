@@ -165,6 +165,7 @@ export interface Connection {
   readOnly: boolean;
   shared: boolean;
   ownerId: number;
+  access?: "owner" | "manage" | "use";
   hasPassword: boolean;
   hasCaCert: boolean;
   hasClientCert: boolean;
@@ -186,11 +187,15 @@ export interface ConnectionGrant {
   userId: number;
   username: string;
   level: GrantLevel;
+  role?: TeamRole;
+  disabled?: boolean;
 }
 
 export interface OIDCStatus {
   enabled: boolean;
   provider: string;
+  google?: boolean;
+  credentialsEnabled?: boolean;
 }
 
 export interface ConnectionInput {

@@ -57,9 +57,11 @@ func New(db *sql.DB, key []byte) *Logger {
 
 // mac binds the entry content to the previous MAC. JSON encoding gives an unambiguous
 // field framing; the row id is excluded because the chain itself fixes the order.
-func (l *Logger) mac(prev string, e *Entry) string {
+func (l *Logger) mac(prev string, e *Entry) string { return macWith(l.key, prev, e) }
+
+func macWith(key []byte, prev string, e *Entry) string {
 	payload, _ := json.Marshal([]any{prev, e.At, e.UserID, e.Username, e.IP, e.Action, e.ConnectionID, e.Target, e.Detail, e.Outcome})
-	m := hmac.New(sha256.New, l.key)
+	m := hmac.New(sha256.New, key)
 	m.Write(payload)
 	return hex.EncodeToString(m.Sum(nil))
 }
@@ -170,18 +172,57 @@ type Verification struct {
 	OK       bool  `json:"ok"`
 	Checked  int   `json:"checked"`
 	BrokenAt int64 `json:"brokenAt,omitempty"` // id of the first entry that does not verify
+	// Anchored is set when older entries were removed by a recorded retention purge:
+	// the chain then starts at AnchoredAt, the hash of the last purged entry.
+	Anchored   bool   `json:"anchored,omitempty"`
+	AnchoredAt string `json:"anchoredAt,omitempty"`
 }
+
+// querier is satisfied by *sql.DB and *sql.Tx, so the chain can be verified
+// inside the transaction that rewrites it (key rotation).
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// purgeAnchorPrefix marks, inside an audit.purged entry's detail, the hash of the
+// last entry the purge removed. Verify trusts a chain head only if one of these
+// MAC-protected entries vouches for it.
+const purgeAnchorPrefix = "anchor="
 
 // Verify walks the whole chain from the first entry.
 func (l *Logger) Verify(ctx context.Context) (Verification, error) {
-	rows, err := l.db.QueryContext(ctx, `SELECT id, at, COALESCE(user_id, 0), username, ip, action,
-		connection_id, target, detail, outcome, prev_hash, hash FROM audit_log ORDER BY id`)
+	return verifyChain(ctx, l.db, l.key)
+}
+
+func verifyChain(ctx context.Context, q querier, key []byte) (Verification, error) {
+	head, err := chainHead(ctx, q)
 	if err != nil {
 		return Verification{}, err
 	}
-	defer rows.Close()
 	v := Verification{OK: true}
 	prev := ""
+	if head != "" {
+		// The oldest entries are gone. Accept that only when a purge entry inside the
+		// chain records exactly this anchor; a silent deletion of the head has none.
+		var n int
+		if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action = 'audit.purged'
+			AND detail LIKE ? ESCAPE '\'`, "%"+escapeLike(purgeAnchorPrefix+head)+"%").Scan(&n); err != nil {
+			return v, err
+		}
+		if n == 0 {
+			v.OK = false
+			_ = q.QueryRowContext(ctx, `SELECT id FROM audit_log ORDER BY id LIMIT 1`).Scan(&v.BrokenAt)
+			return v, nil
+		}
+		prev, v.Anchored, v.AnchoredAt = head, true, head
+	}
+	rows, err := q.QueryContext(ctx, `SELECT id, at, COALESCE(user_id, 0), username, ip, action,
+		connection_id, target, detail, outcome, prev_hash, hash FROM audit_log ORDER BY id`)
+	if err != nil {
+		return v, err
+	}
+	defer rows.Close()
 	for rows.Next() {
 		var e Entry
 		var storedPrev string
@@ -190,13 +231,24 @@ func (l *Logger) Verify(ctx context.Context) (Verification, error) {
 			return v, err
 		}
 		v.Checked++
-		if storedPrev != prev || !hmac.Equal([]byte(l.mac(prev, &e)), []byte(e.Hash)) {
+		if storedPrev != prev || !hmac.Equal([]byte(macWith(key, prev, &e)), []byte(e.Hash)) {
 			v.OK, v.BrokenAt = false, e.ID
 			return v, nil
 		}
 		prev = e.Hash
 	}
 	return v, rows.Err()
+}
+
+// chainHead is the prev_hash of the oldest remaining entry: "" for an intact
+// chain, the purge anchor after a retention purge.
+func chainHead(ctx context.Context, q querier) (string, error) {
+	var head string
+	err := q.QueryRowContext(ctx, `SELECT prev_hash FROM audit_log ORDER BY id LIMIT 1`).Scan(&head)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return head, err
 }
 
 var secretPatterns = []*regexp.Regexp{

@@ -1,0 +1,34 @@
+# Deploy a prebuilt image; no source checkout or build tools required.
+# docker compose --env-file .env -f docker-compose.deploy.yml pull
+# docker compose --env-file .env -f docker-compose.deploy.yml up -d
+name: ${COMPOSE_PROJECT_NAME:-dbyson}
+services:
+  dbyson:
+    image: ${DBYSON_IMAGE:-ghcr.io/gaboiv/dbyson}:${IMAGE_TAG:?Set a published image version}
+    restart: unless-stopped
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${APP_PORT:-8082}:8080"
+    environment:
+      DBYSON_MODE: team
+      DBYSON_MASTER_KEY: ${DBYSON_MASTER_KEY:?Set a base64-encoded 32-byte master key}
+      DBYSON_ALLOWED_HOSTS: ${DBYSON_ALLOWED_HOSTS:?Set the database and SSH destinations this installation may reach}
+      DBYSON_SETUP_TOKEN: ${DBYSON_SETUP_TOKEN:?Set a private token for initial administrator setup}
+      DBYSON_CREDENTIALS_ENABLED: ${CREDENTIALS_ENABLED:-true}
+      DBYSON_OIDC_ENABLED: ${GOOGLE_ENABLED:-false}
+      DBYSON_OIDC_ISSUER: https://accounts.google.com
+      DBYSON_OIDC_NAME: Google
+      DBYSON_OIDC_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      DBYSON_OIDC_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      DBYSON_OIDC_REDIRECT_URL: ${PUBLIC_URL:-http://localhost:8082}/api/auth/oidc/callback
+      DBYSON_OIDC_ALLOWED_DOMAINS: ${ALLOWED_DOMAINS:-}
+      DBYSON_OIDC_AUTO_PROVISION: ${GOOGLE_AUTO_PROVISION:-true}
+      DBYSON_OIDC_TRUST_MFA: ${GOOGLE_TRUST_MFA:-false}
+    volumes:
+      - dbyson-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: ${MEMORY_LIMIT:-1g}
+    pids_limit: 128
+volumes:
+  dbyson-data:

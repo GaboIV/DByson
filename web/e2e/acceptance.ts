@@ -43,7 +43,7 @@ function db(query: string) {
     [
       "compose",
       "-p",
-      "dbyson-e2e",
+      process.env.DBYSON_E2E_PROJECT || "dbyson-e2e",
       "-f",
       "../compose.e2e.yml",
       "exec",
@@ -309,7 +309,7 @@ export function acceptanceTests() {
         [
           "compose",
           "-p",
-          "dbyson-e2e",
+          process.env.DBYSON_E2E_PROJECT || "dbyson-e2e",
           "-f",
           "../compose.e2e.yml",
           "exec",

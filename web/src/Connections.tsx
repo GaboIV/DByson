@@ -2,14 +2,16 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Connection, type TestResponse } from "./api";
 import { ConnectionForm } from "./ConnectionForm";
 import { ConnectionTransfer } from "./ConnectionTransfer";
+import { SharingDialog } from "./SharingDialog";
 import { useConfirm } from "./Confirm";
 interface ConnectionsProps {
   onSelect?: (conn: Connection) => void;
   storageKey?: string;
   startNew?: boolean;
   isAdmin?: boolean;
+  isViewer?: boolean;
 }
-export function Connections({ onSelect, storageKey = "dbyson", startNew = false, isAdmin = false }: ConnectionsProps) {
+export function Connections({ onSelect, storageKey = "dbyson", startNew = false, isAdmin = false, isViewer = false }: ConnectionsProps) {
   const confirm = useConfirm();
   const [items, setItems] = useState<Connection[] | null>(null),
     [editing, setEditing] = useState<Connection | "new" | null>(startNew ? "new" : null),
@@ -18,7 +20,8 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false,
   const [search, setSearch] = useState(""),
     [filter, setFilter] = useState("all"),
     [selected, setSelected] = useState<string[]>([]),
-    [transfer, setTransfer] = useState<"import" | "export" | null>(null);
+    [transfer, setTransfer] = useState<"import" | "export" | null>(null),
+    [granting, setGranting] = useState<Connection | null>(null);
   const [favorites, setFavorites] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem(storageKey + ":favorites") || "[]");
@@ -91,7 +94,9 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false,
           filter === c.env ||
           (filter === "ssh" && c.ssh?.enabled) ||
           (filter === "readonly" && c.readOnly) ||
-          (filter === "favorites" && favorites.includes(c.id))),
+          (filter === "favorites" && favorites.includes(c.id)) ||
+          (filter === "shared" && c.shared) ||
+          (filter === "private" && !c.shared)),
     )
     .sort((a, b) => Number(favorites.includes(b.id)) - Number(favorites.includes(a.id)));
   return (
@@ -111,12 +116,14 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false,
             </span>
           </div>
         </div>
-        <div className="actions">
-          <button onClick={() => setTransfer("import")}>↑ Importar perfiles</button>
-          <button className="primary" onClick={() => setEditing("new")}>
-            ＋ Nueva conexión
-          </button>
-        </div>
+        {!isViewer && (
+          <div className="actions">
+            <button onClick={() => setTransfer("import")}>↑ Importar perfiles</button>
+            <button className="primary" onClick={() => setEditing("new")}>
+              ＋ Nueva conexión
+            </button>
+          </div>
+        )}
       </div>
       <div className="connections-toolbar">
         <label className="connection-search">
@@ -132,6 +139,8 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false,
           {[
             ["all", "Todos los entornos"],
             ["favorites", "Favoritas"],
+            ["shared", "Compartidas con el equipo"],
+            ["private", "Privadas"],
             ["local", "Local"],
             ["dev", "Desarrollo"],
             ["staging", "Staging"],
@@ -151,13 +160,13 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false,
             setTransfer("export");
           }}
         >
-          ↓ Compartir perfiles
+          ↓ Exportar archivo
         </button>
       </div>
       {selected.length > 0 && (
         <div className="batch-toolbar">
           <span>{selected.length} seleccionadas</span>
-          <button onClick={() => setTransfer("export")}>Compartir selección</button>
+          <button onClick={() => setTransfer("export")}>Exportar selección</button>
           <button onClick={() => setSelected([])}>Limpiar selección</button>
         </div>
       )}
@@ -175,93 +184,119 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false,
         <div className="card onboarding">
           <strong>Tu primera conexión, en cuatro pasos</strong>
           <p>Elige un destino local, Docker o SSH. Comprueba su identidad, prueba el acceso y guarda el perfil.</p>
-          <button className="primary" onClick={() => setEditing("new")}>
-            Crear mi primera conexión
-          </button>
+          {!isViewer && (
+            <button className="primary" onClick={() => setEditing("new")}>
+              Crear mi primera conexión
+            </button>
+          )}
           <small className="muted">¿Ya tienes un archivo de un compañero? Usa Importar perfiles.</small>
         </div>
       )}
       {items && items.length > 0 && visible.length === 0 && <p className="muted">No hay conexiones que coincidan con esta búsqueda.</p>}
       <div className="cards">
-        {visible.map((c) => (
-          <article key={c.id} className={`card conn env-${c.env}`}>
-            <div className="conn-card-tools">
-              <label className="check">
-                <input
-                  type="checkbox"
-                  aria-label={`Seleccionar ${c.name}`}
-                  checked={selected.includes(c.id)}
-                  onChange={(e) => setSelected((s) => (e.target.checked ? [...s, c.id].slice(0, 25) : s.filter((id) => id !== c.id)))}
-                />
-                <span className={`badge env-${c.env}`}>{c.env}</span>
-                {c.shared && <span className="badge">Compartida</span>}
-              </label>
-              <button
-                className="favorite-button"
-                aria-label={`${favorites.includes(c.id) ? "Quitar de" : "Añadir a"} favoritas: ${c.name}`}
-                aria-pressed={favorites.includes(c.id)}
-                onClick={() => favorite(c.id)}
-              >
-                {favorites.includes(c.id) ? "★" : "☆"}
+        {visible.map((c) => {
+          const canManage = !isViewer && (isAdmin || c.access === "owner" || c.access === "manage");
+          const canDelete = !isViewer && (isAdmin || c.access === "owner");
+          const blocked = isViewer && c.env === "prod";
+          return (
+            <article key={c.id} className={`card conn env-${c.env}`}>
+              <div className="conn-card-tools">
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    aria-label={`Seleccionar ${c.name}`}
+                    checked={selected.includes(c.id)}
+                    onChange={(e) => setSelected((s) => (e.target.checked ? [...s, c.id].slice(0, 25) : s.filter((id) => id !== c.id)))}
+                  />
+                  <span className={`badge env-${c.env}`}>{c.env}</span>
+                  {c.shared && <span className="badge">Compartida</span>}
+                </label>
+                <button
+                  className="favorite-button"
+                  aria-label={`${favorites.includes(c.id) ? "Quitar de" : "Añadir a"} favoritas: ${c.name}`}
+                  aria-pressed={favorites.includes(c.id)}
+                  onClick={() => favorite(c.id)}
+                >
+                  {favorites.includes(c.id) ? "★" : "☆"}
+                </button>
+              </div>
+              <button className="connection-open" disabled={blocked} onClick={() => onSelect?.(c)}>
+                <h3>{c.name}</h3>
+                <span className="muted mono">
+                  {c.username}@{c.host}:{c.port}
+                </span>
+                {c.database && <span className="muted">{c.database}</span>}
               </button>
-            </div>
-            <button className="connection-open" onClick={() => onSelect?.(c)}>
-              <h3>{c.name}</h3>
-              <span className="muted mono">
-                {c.username}@{c.host}:{c.port}
-              </span>
-              {c.database && <span className="muted">{c.database}</span>}
-            </button>
-            <div className="connection-tags">
-              <span>{c.ssh?.enabled ? "↗ Túnel SSH" : "↔ Directa"}</span>
-              <span>{c.readOnly ? "Solo lectura" : "Lectura / escritura"}</span>
-              <span>{c.tlsMode === "disabled" ? "Sin TLS MySQL" : "TLS MySQL"}</span>
-            </div>
-            {c.ssh?.enabled && (
-              <p className="muted mono">
-                vía {c.ssh.user}@{c.ssh.host}
-                {c.ssh.auth === "key" && !c.ssh.hasPrivateKey && !c.ssh.keyFile ? " · adjunta la clave SSH" : ""}
-              </p>
-            )}
-            {status[c.id] && (
-              <p className="status-line" role="status">
-                {status[c.id]}
-              </p>
-            )}
-            <footer>
-              <button className="primary" onClick={() => onSelect?.(c)}>
-                Conectar
-              </button>
-              <button disabled={status[c.id] === "Probando…"} onClick={() => void quickTest(c)}>
-                Probar
-              </button>
-              <button onClick={() => setEditing(c)}>Editar</button>
-              <details className="connection-menu">
-                <summary aria-label={`Más acciones de ${c.name}`}>•••</summary>
-                <div>
-                  <button
-                    onClick={() => {
-                      setSelected([c.id]);
-                      setTransfer("export");
-                    }}
-                  >
-                    Compartir
+              <div className="connection-tags">
+                <span>{c.ssh?.enabled ? "↗ Túnel SSH" : "↔ Directa"}</span>
+                <span>{isViewer || c.readOnly ? "Solo lectura" : "Lectura / escritura"}</span>
+                <span>{c.tlsMode === "disabled" ? "Sin TLS MySQL" : "TLS MySQL"}</span>
+              </div>
+              {c.ssh?.enabled && (
+                <p className="muted mono">
+                  vía {c.ssh.user}@{c.ssh.host}
+                  {c.ssh.auth === "key" && !c.ssh.hasPrivateKey && !c.ssh.keyFile ? " · adjunta la clave SSH" : ""}
+                </p>
+              )}
+              {status[c.id] && (
+                <p className="status-line" role="status">
+                  {status[c.id]}
+                </p>
+              )}
+              <footer>
+                <button
+                  className="primary"
+                  disabled={blocked}
+                  title={blocked ? "El rol Solo lectura no permite abrir producción" : undefined}
+                  onClick={() => onSelect?.(c)}
+                >
+                  Conectar
+                </button>
+                <button disabled={blocked || status[c.id] === "Probando…"} onClick={() => void quickTest(c)}>
+                  Probar
+                </button>
+                {canManage && <button onClick={() => setEditing(c)}>Editar</button>}
+                {canManage && (isAdmin || c.shared) && (
+                  <button className="share-team-button" onClick={() => setGranting(c)}>
+                    {c.shared ? "Gestionar acceso" : "Compartir con el equipo"}
                   </button>
-                  <button className="danger" onClick={() => void remove(c)}>
-                    Eliminar perfil
-                  </button>
-                </div>
-              </details>
-            </footer>
-          </article>
-        ))}
+                )}
+                <details className="connection-menu">
+                  <summary aria-label={`Más acciones de ${c.name}`}>•••</summary>
+                  <div>
+                    <button
+                      onClick={() => {
+                        setSelected([c.id]);
+                        setTransfer("export");
+                      }}
+                    >
+                      Exportar archivo
+                    </button>
+                    {canDelete && (
+                      <button className="danger" onClick={() => void remove(c)}>
+                        Eliminar perfil
+                      </button>
+                    )}
+                  </div>
+                </details>
+              </footer>
+            </article>
+          );
+        })}
       </div>
+      {granting && (
+        <SharingDialog connection={granting} isAdmin={isAdmin} onChanged={() => void load()} onClose={() => setGranting(null)} />
+      )}
       {transfer && (
         <ConnectionTransfer
           mode={transfer}
           connections={(items || []).filter((c) => selected.includes(c.id))}
           onClose={() => setTransfer(null)}
           onImported={() => void load()}
+          canExportSecrets={
+            !isViewer &&
+            (items || []).filter((c) => selected.includes(c.id)).every((c) => isAdmin || c.access === "owner" || c.access === "manage")
+          }
         />
       )}
     </section>

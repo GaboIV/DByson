@@ -3,7 +3,7 @@
 > Un IDE web de bases de datos: **la sencillez de Adminer, la potencia de phpMyAdmin, una UX moderna y seguridad por defecto.**
 > Se distribuye como una sola imagen Docker que cualquier persona levanta con un comando.
 
-**Revisión:** 24 de octubre de 2026 · **Nombre:** DByson (antes AdminBase; ver [ADR 0006](adr/0006-renombrado-a-dbyson.md)) · **Licencia:** Apache-2.0
+**Revisión:** 26 de octubre de 2026 · **Nombre:** DByson (antes AdminBase; ver [ADR 0006](adr/0006-renombrado-a-dbyson.md)) · **Licencia:** Apache-2.0
 
 **Documentos relacionados:** [modelo de amenazas](threat-model.md) · [decisiones de arquitectura](adr/README.md) · detalle de lo implementado en [seguridad del MVP](MVP_SEGURIDAD.md), [experiencia de consulta](EXPERIENCIA_CONSULTA.md), [interfaz y preferencias](INTERFAZ_Y_PREFERENCIAS.md) y [SSH y espacios de trabajo](SSH_Y_ESPACIOS.md). La [evaluación del 21 de octubre](EVALUACION_2026-10-21.md) es histórica.
 
@@ -15,15 +15,15 @@ DByson ya es una herramienta usable a diario para **una persona con MySQL/MariaD
 
 1. **Integrar y desplegar la Fase 2:** la v0.1.0 está publicada y firmada. Las mejoras de conectividad segura están implementadas y validadas localmente; falta su integración y despliegue ([guía](CONECTIVIDAD_SEGURA.md)). La comprobación de marca está aplazada y no bloquea publicaciones.
 2. **Productividad de un cliente maduro:** editor SQL con autocompletado, consultas guardadas, EXPLAIN, navegación por claves foráneas, importación.
-3. **Modo equipo:** usuarios, roles, conexiones compartidas, SSO, retención de auditoría y retirada de `ADMINBASE_*` implementados ([EQUIPOS.md](EQUIPOS.md)); quedan la interfaz de permisos y el pentest externo antes de la v1.0.
+3. **Modo equipo:** usuarios, roles, conexiones compartidas, SSO, retención de auditoría y retirada de `ADMINBASE_*` implementados ([EQUIPOS.md](EQUIPOS.md)); la interfaz de permisos ya está implementada; quedan la publicación de los cambios finales y la validación del despliegue. El pentest sigue pendiente.
 
 | Fase | Estado | Resumen |
 |---|---|---|
 | 0 · Fundaciones | ✅ Cerrada | CI correcto en `main` tras integrar las ramas. |
 | 1 · MVP MySQL | ✅ v0.1.0 publicada | CI, aceptación, imagen multi-arquitectura firmada y escaneada. Marca aplazada sin bloquear releases. |
-| 2 · Conectividad segura | 🟢 Implementada; integración pendiente | Cancelación con KILL QUERY, sesiones revocables, certificados MySQL y mTLS nativo; pruebas locales y CI configurada. |
-| 3 · Productividad | 🟡 Iniciada | Pestañas, paleta y archivos `.sql` listos. El resto pendiente. |
-| 4 · Equipos | 🟡 Implementada | Usuarios, roles, conexiones compartidas, SSO OIDC, auditoría exportable con retención y clave externa con rotación. Quedan: interfaz de permisos y pentest externo. |
+| 2 · Conectividad segura | ✅ Integrada | Cancelación con KILL QUERY, sesiones revocables, certificados MySQL y mTLS nativo; CI remota aprobada en 982b141. Configurar certificados por instalación. |
+| 3 · Productividad | ✅ Integrada en main | Editor, consultas guardadas, FK, EXPLAIN, importación, estructura, ER, procesos, cuentas MySQL y passkeys. CI remota aprobada en 982b141. |
+| 4 · Equipos | 🟡 Implementada | Usuarios, roles, conexiones compartidas, SSO OIDC, auditoría exportable con retención y clave externa con rotación. Interfaz de permisos completada localmente; falta publicar los cambios finales, configurar el despliegue y validar Google real. Pentest pendiente. |
 | 5+ · Expansión | ⬜ Pendiente | Solo MySQL/MariaDB; el contrato de drivers aún no existe en el código. |
 
 ---
@@ -115,7 +115,7 @@ El estado detallado, con lo implementado, lo parcial y los riesgos aceptados, es
 
 **Implementado en la rama de productividad:** CodeMirror y ejecución por sentencia; biblioteca privada cifrada en el servidor; navegación por claves foráneas desde el detalle; EXPLAIN visual; CSV transaccional y scripts revisados en SQL; diseñador DDL; diagrama ER; procesos; cuentas MySQL y passkeys. Uso y límites en [PRODUCTIVIDAD.md](PRODUCTIVIDAD.md).
 
-**Pendiente:** integrar la rama y validar CI remoto, completar las herramientas avanzadas fuera del alcance del diseñador inicial y ofrecer interfaz en inglés (i18n).
+**Pendiente:** publicar los últimos cambios de equipo y Google, completar las herramientas avanzadas fuera del alcance del diseñador inicial y ofrecer interfaz en inglés (i18n). La CI de main en 982b141 ya valida las fases 2 y 3.
 
 ---
 
@@ -156,7 +156,7 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
   - GitHub, GHCR, dominio y logo comprobados. Marca aplazada por decisión del usuario; no bloquea releases.
 - **Entregable:** `v0.1.0`.
 
-### Fase 2 — Conectividad segura · 🟢 implementada, integración pendiente
+### Fase 2 — Conectividad segura · ✅ integrada, despliegue configurable
 - [x] Túnel SSH (OpenSSH/PPK, agente, contraseña, bastión, huella fijada).
 - [x] 2FA TOTP con códigos de recuperación; modos `personal`/`team` ([ADR 0004](adr/0004-modos-personal-y-equipo.md)).
 - [x] Auditoría v1 ([ADR 0003](adr/0003-auditoria-append-only-encadenada.md)).
@@ -164,10 +164,11 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 - [x] Panel de sesiones activas propias con revocación y cancelación de sus consultas.
 - [x] Certificados de cliente MySQL validados en integración real; job de seguridad añadido a CI.
 - [x] mTLS nativo para todo el listener, cookie vinculada al certificado y guía de emisión con OpenSSL ([ADR 0007](adr/0007-conectividad-segura.md)).
-- [ ] Integrar la rama, confirmar la CI remota y configurar los certificados reales del despliegue.
+- [x] Integración en main y CI remota de conectividad segura aprobada (982b141).
+- [ ] Configurar los certificados reales del despliegue cuando se utilice mTLS.
 - **Entregable:** `v0.2.0`, apto para producción remota en uso personal.
 
-### Fase 3 — Productividad · 🟡 implementada en rama; pendiente de integración
+### Fase 3 — Productividad · ✅ integrada en main
 - [x] Pestañas agrupadas por tabla, paleta de comandos, consultas con nombre y archivos `.sql`.
 - [x] Editor SQL con CodeMirror 6: resaltado, autocompletado por esquema, ejecutar selección.
 - [x] Consultas privadas cifradas en el servidor (guardado explícito), con snippets del editor.
@@ -178,7 +179,7 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 - [x] Lista de procesos con KILL QUERY; cuentas y permisos acotados de MySQL.
 - [x] Diagrama ER de relaciones declaradas, con filtro y lista accesible.
 - [x] Passkeys/WebAuthn con verificación de usuario y origen explícito.
-- Detalle de uso y límites: [PRODUCTIVIDAD.md](PRODUCTIVIDAD.md). Cambios en `codex/productivity`, pendientes de commit/PR y CI remoto. Activar passkeys en una instalación requiere configurar su origen y registrar dispositivos.
+- Detalle de uso y límites: [PRODUCTIVIDAD.md](PRODUCTIVIDAD.md). Integrada en main; CI remota aprobada para 982b141. Activar passkeys en una instalación requiere configurar su origen y registrar dispositivos.
 - **Entregable:** `v0.5.0`, el equipo deja Adminer/phpMyAdmin para el trabajo diario.
 
 ### Fase 4 — Equipos · 🟡 implementada, pendiente de endurecer
@@ -191,7 +192,7 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 - [x] Auditoría: filtros por usuario, exportación JSONL/CSV a SIEM, retención con anclaje.
 - [x] Exigir clave maestra externa en modo `team`; comando `rotate-key`.
 - [x] Guía de despliegue con HTTPS y VPN/zero-trust ([EQUIPOS.md](EQUIPOS.md), [CONECTIVIDAD_SEGURA.md](CONECTIVIDAD_SEGURA.md)).
-- [ ] Interfaz de permisos por conexión (hoy por API `grants`).
+- [x] Interfaz de permisos por conexión, revocación, visibilidad y controles según permisos efectivos.
 - [x] Retirar la compatibilidad con `ADMINBASE_*` (se ignoran; el arranque avisa).
 - [ ] **Pentest externo** — riesgo aceptado por escrito (2026-10-25), contratar cuando sea posible, ver [PENTEST.md](PENTEST.md).
 - **Entregable:** `v1.0.0`.
@@ -265,7 +266,7 @@ Estimaciones para una persona a tiempo parcial (~15 h/semana).
 
 ## 13. Próximos pasos inmediatos
 
-1. Integrar las mejoras de interfaz y la Fase 2, y confirmar su CI remota.
-2. Configurar los certificados reales para activar mTLS siguiendo la guía de despliegue.
-3. Publicar la siguiente versión cuando se apruebe la integración; no mover la etiqueta v0.1.0 existente.
-4. Endurecer la Fase 4 (interfaz de permisos, revisión de seguridad) y contratar el pentest externo ([PENTEST.md](PENTEST.md)) antes de la v1.0.
+1. Publicar los cambios finales de equipo y Google tras aprobar la CI del commit exacto. No mover v0.1.0.
+2. Distribuir la imagen multi-arquitectura de GHCR con `docker-compose.deploy.yml` y `.env`, sin compilar en el servidor.
+3. Configurar por instalación su URL HTTPS, Google OAuth, dominios, clave maestra y destinos de bases de datos; validar el acceso real de cada organización.
+4. Mantener pendiente el pentest externo ([PENTEST.md](PENTEST.md)); la validación automatizada no lo sustituye.
