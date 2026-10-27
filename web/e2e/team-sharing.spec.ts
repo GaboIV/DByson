@@ -93,7 +93,8 @@ test("Equipo: filtros, protección de administración y contraseña dentro de la
   await linking.getByLabel("Correo corporativo", { exact: true }).fill("gabo@equaly.pe");
   await linking.getByRole("button", { name: "Guardar correo", exact: true }).click();
   await expect(linking).toBeHidden();
-  await expect(team.getByText("gabo@equaly.pe", { exact: true })).toBeVisible();
+  await expect(team.getByText("gabo@equaly.pe")).toBeVisible();
+  expect(state.users[0].email).toBe("gabo@equaly.pe");
   await team.getByRole("searchbox", { name: "Buscar personas" }).fill("ana");
   await expect(team.locator(".team-member")).toHaveCount(1);
   await team.getByRole("button", { name: "Cambiar contraseña de ana.garcia", exact: true }).click();
