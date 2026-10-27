@@ -103,7 +103,7 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("security policy", "mode", mode, "mfa", mfaPolicy)
 	if legacy := config.LegacyPresent(); len(legacy) > 0 {
-		log.Warn("ignoring legacy ADMINBASE_* variables (support removed in v1.0): remove them",
+		log.Warn("ignoring legacy ADMINBASE_* variables (no longer supported): rename them to DBYSON_*",
 			"variables", legacy)
 	}
 	pol, err := policy.ParseAllowlist(config.Get("ALLOWED_HOSTS"))
@@ -114,16 +114,14 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	oidc := sso.New(sso.Config{
-		Issuer:        config.Get("OIDC_ISSUER"),
-		ClientID:      config.Get("OIDC_CLIENT_ID"),
-		ClientSecret:  config.Get("OIDC_CLIENT_SECRET"),
-		RedirectURL:   config.Get("OIDC_REDIRECT_URL"),
-		ProviderName:  config.Get("OIDC_NAME"),
-		AutoProvision: config.Get("OIDC_AUTO_PROVISION") == "true" || config.Get("OIDC_AUTO_PROVISION") == "1",
-	})
+	oidcConfig, passwordLoginDisabled, err := loadAuthConfig()
+	if err != nil {
+		return err
+	}
+	oidc := sso.New(oidcConfig)
 	if oidc.Config().Enabled() {
-		log.Info("sso enabled", "provider", oidc.Config().Name(), "autoProvision", oidc.Config().AutoProvision)
+		log.Info("sso enabled", "provider", oidc.Config().Name(), "autoProvision", oidc.Config().AutoProvision,
+			"allowedDomains", oidc.Config().AllowedDomains, "trustMFA", oidc.Config().TrustMFA)
 		if oidc.Config().RedirectURL == "" {
 			log.Warn("sso callback URL is not configured: set DBYSON_OIDC_REDIRECT_URL")
 		}
@@ -133,13 +131,14 @@ func run(log *slog.Logger) error {
 		Addr:      addr,
 		TLSConfig: tlsConfig,
 		Handler: api.NewRouter(version, web.Assets(), api.Deps{
-			WebAuthn:   passkeys,
-			Store:      st,
-			Vault:      v,
-			Policy:     pol,
-			SetupToken: config.Get("SETUP_TOKEN"),
-			MFAPolicy:  mfaPolicy,
-			OIDC:       oidc,
+			WebAuthn:              passkeys,
+			Store:                 st,
+			Vault:                 v,
+			Policy:                pol,
+			SetupToken:            config.Get("SETUP_TOKEN"),
+			MFAPolicy:             mfaPolicy,
+			OIDC:                  oidc,
+			PasswordLoginDisabled: passwordLoginDisabled,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -228,4 +227,10 @@ func isLoopback(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// envBool reads a DBYSON_* flag: "true" or "1" enable it.
+func envBool(name string) bool {
+	v := config.Get(name)
+	return v == "true" || v == "1"
 }

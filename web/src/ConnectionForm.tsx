@@ -359,6 +359,12 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
       await navigate(step + 1);
       return;
     }
+    if (
+      existing?.shared &&
+      !draft.shared &&
+      !(await confirm("¿Dejar de compartir esta conexión? Al guardar se quitarán todos los permisos del equipo."))
+    )
+      return;
     setBusy("verify");
     const verified = await verifySSH();
     if (!verified) {
@@ -680,7 +686,15 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
                   <input type="checkbox" checked={draft.shared || false} onChange={(e) => update({ shared: e.target.checked })} />
                   Compartida con el equipo
                 </label>
-                <p className="muted">Visible para quien reciba acceso. Los permisos por persona se gestionan con la API de grants.</p>
+                <p className="muted">
+                  Después de guardar, elige quién puede usarla desde «Gestionar acceso» en su tarjeta. Activar esta opción no da acceso a
+                  todo el equipo.
+                </p>
+                {existing?.shared && !draft.shared && (
+                  <p className="warn">
+                    Al guardar, se quitarán todos los permisos del equipo. Para volver a compartir tendrás que asignarlos de nuevo.
+                  </p>
+                )}
               </>
             )}
           </>

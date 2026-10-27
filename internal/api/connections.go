@@ -77,6 +77,7 @@ type connView struct {
 	ReadOnly      bool          `json:"readOnly"`
 	Shared        bool          `json:"shared"`
 	OwnerID       int64         `json:"ownerId"`
+	Access        string        `json:"access"`
 	HasPassword   bool          `json:"hasPassword"`
 	HasCACert     bool          `json:"hasCaCert"`
 	HasClientCert bool          `json:"hasClientCert"`
@@ -188,20 +189,6 @@ func scanConn(sc interface{ Scan(...any) error }) (*connRecord, error) {
 	return &rec, err
 }
 
-// loadOwned keeps the old strict-owner behavior for callers that need it.
-// Most handlers use loadConnection (team.go), which also honours admin access
-// and grants on shared connections.
-func (s *Server) loadOwned(ctx context.Context, r *http.Request) (*connRecord, secretBlob, error) {
-	sess := sessionFrom(r)
-	rec, err := scanConn(s.Store.DB.QueryRowContext(ctx,
-		`SELECT `+connColumns+` FROM connections WHERE id = ? AND owner_id = ?`, r.PathValue("id"), sess.UserID))
-	if err != nil {
-		return nil, secretBlob{}, err
-	}
-	sec, err := s.openSecret(rec)
-	return rec, sec, err
-}
-
 func (s *Server) openSecret(rec *connRecord) (secretBlob, error) {
 	var sec secretBlob
 	plain, err := s.Vault.Open(rec.ID, rec.Wrapped, rec.Sealed)
@@ -237,6 +224,29 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 
 func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r)
+	levels := map[string]string{}
+	if sess.Role != RoleAdmin {
+		grants, err := s.Store.DB.QueryContext(r.Context(), `SELECT connection_id, level FROM connection_grants WHERE user_id = ?`, sess.UserID)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		for grants.Next() {
+			var id, level string
+			if err := grants.Scan(&id, &level); err != nil {
+				grants.Close()
+				s.fail(w, err)
+				return
+			}
+			levels[id] = level
+		}
+		err = grants.Err()
+		grants.Close()
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
 	var rows *sql.Rows
 	var err error
 	if sess.Role == RoleAdmin {
@@ -266,7 +276,9 @@ func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, err)
 			return
 		}
-		out = append(out, view(rec, sec))
+		v := view(rec, sec)
+		v.Access = connectionAccess(sess, rec, levels[rec.ID])
+		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {
 		s.fail(w, err)
@@ -281,7 +293,10 @@ func (s *Server) getConnection(w http.ResponseWriter, r *http.Request) {
 		s.failAccess(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, view(rec, sec))
+	v := view(rec, sec)
+	level, _ := s.grantLevel(r.Context(), rec.ID, sessionFrom(r).UserID)
+	v.Access = connectionAccess(sessionFrom(r), rec, level)
+	writeJSON(w, http.StatusOK, v)
 }
 
 func (s *Server) createConnection(w http.ResponseWriter, r *http.Request) {
@@ -329,9 +344,11 @@ func (s *Server) createConnection(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	rec := &connRecord{ID: id, Name: in.Name, Env: in.Env, Host: in.Host, Port: in.Port, Username: in.Username,
+	rec := &connRecord{ID: id, OwnerID: sessionFrom(r).UserID, Name: in.Name, Env: in.Env, Host: in.Host, Port: in.Port, Username: in.Username,
 		Database: in.Database, TLSMode: in.TLSMode, ReadOnly: in.ReadOnly, Shared: sh, CreatedAt: now, UpdatedAt: now}
-	writeJSON(w, http.StatusCreated, view(rec, sec))
+	v := view(rec, sec)
+	v.Access = "owner"
+	writeJSON(w, http.StatusCreated, v)
 }
 
 func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request) {
@@ -360,11 +377,18 @@ func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request) {
 			wantShared = 1
 		}
 	}
-	if wantShared != rec.Shared && sessionFrom(r).Role != RoleAdmin {
+	sess := sessionFrom(r)
+	if wantShared != rec.Shared && sess.Role != RoleAdmin {
 		writeError(w, http.StatusForbidden, "only admins can share connections")
 		return
 	}
-	sec, msg := in.applySecrets(current)
+	if !ownerOrAdmin(sess, rec) {
+		if what := loweredProtection(rec, in); what != "" {
+			writeError(w, http.StatusForbidden, "only the owner or an admin can lower "+what+" of a shared connection")
+			return
+		}
+	}
+	sec, msg := in.applySecrets(secretsFor(sess, rec, current, in))
 	if msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
@@ -379,7 +403,13 @@ func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request) {
 	if in.ReadOnly {
 		ro = 1
 	}
-	_, err = s.Store.DB.ExecContext(r.Context(),
+	tx, err := s.Store.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(r.Context(),
 		`UPDATE connections SET name=?, env=?, host=?, port=?, username=?, dbname=?, tls_mode=?, read_only=?,
 		 shared=?, wrapped_dek=?, secret=?, updated_at=? WHERE id=?`,
 		in.Name, in.Env, in.Host, in.Port, in.Username, in.Database, in.TLSMode, ro,
@@ -390,11 +420,20 @@ func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	// Unsharing revokes every grant at once.
 	if wantShared == 0 && rec.Shared != 0 {
-		_, _ = s.Store.DB.ExecContext(r.Context(), `DELETE FROM connection_grants WHERE connection_id = ?`, rec.ID)
+		if _, err := tx.ExecContext(r.Context(), `DELETE FROM connection_grants WHERE connection_id = ?`, rec.ID); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		s.fail(w, err)
+		return
 	}
 	rec.Name, rec.Env, rec.Host, rec.Port, rec.Username, rec.Database = in.Name, in.Env, in.Host, in.Port, in.Username, in.Database
 	rec.TLSMode, rec.ReadOnly, rec.Shared, rec.UpdatedAt = in.TLSMode, in.ReadOnly, wantShared, now
-	writeJSON(w, http.StatusOK, view(rec, sec))
+	v := view(rec, sec)
+	v.Access = connectionAccess(sess, rec, GrantManage)
+	writeJSON(w, http.StatusOK, v)
 }
 
 func (s *Server) deleteConnection(w http.ResponseWriter, r *http.Request) {
@@ -468,14 +507,16 @@ func (s *Server) testDraftConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
+	// Testing a draft of a saved profile is part of editing it: it needs manage
+	// access, and the stored secrets only travel to their original destination.
 	base := secretBlob{}
 	if r.PathValue("id") != "" {
-		_, stored, err := s.loadConnection(r.Context(), r, GrantUse)
+		rec, stored, err := s.loadConnection(r.Context(), r, GrantManage)
 		if err != nil {
 			s.failAccess(w, r, err)
 			return
 		}
-		base = stored
+		base = secretsFor(sessionFrom(r), rec, stored, in)
 	}
 	sec, msg := in.applySecrets(base)
 	if msg != "" {
@@ -511,13 +552,18 @@ func (s *Server) sshFingerprint(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if r.PathValue("id") != "" {
-		_, sec, err := s.loadConnection(ctx, r, GrantUse)
+		// Reaching the target through the saved bastion authenticates with its
+		// stored credentials: same rules as testing a draft.
+		rec, sec, err := s.loadConnection(ctx, r, GrantManage)
 		if err != nil {
 			s.failAccess(w, r, err)
 			return
 		}
-		merged := tunnel.Merge(tunnel.Config{Jump: in.Jump}, sec.SSH)
-		in.Jump = merged.Jump
+		sameJump := in.Jump != nil && sec.SSH.Jump != nil && sameHop(*in.Jump, *sec.SSH.Jump)
+		if ownerOrAdmin(sessionFrom(r), rec) || sameJump {
+			merged := tunnel.Merge(tunnel.Config{Jump: in.Jump}, sec.SSH)
+			in.Jump = merged.Jump
+		}
 	}
 	observation, err := tunnel.ObserveVia(ctx, tunnel.Hop{Host: in.Host, Port: in.Port, User: in.User}, in.Jump, s.Policy)
 	if err != nil {

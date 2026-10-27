@@ -6,11 +6,13 @@ export function ConnectionTransfer({
   connections,
   onClose,
   onImported,
+  canExportSecrets = true,
 }: {
   mode: "import" | "export";
   connections: Connection[];
   onClose: () => void;
   onImported: () => void;
+  canExportSecrets?: boolean;
 }) {
   const [secrets, setSecrets] = useState(false),
     [passphrase, setPassphrase] = useState(""),
@@ -56,10 +58,14 @@ export function ConnectionTransfer({
     }
   }
   return (
-    <Dialog title={mode === "export" ? "Compartir conexiones" : "Importar conexiones"} onClose={onClose}>
+    <Dialog title={mode === "export" ? "Exportar conexiones a un archivo" : "Importar conexiones"} onClose={onClose}>
       {mode === "export" ? (
         <>
-          <p>Se descargarán {connections.length} perfiles. Las claves privadas SSH y sus passphrases se adjuntan por separado.</p>
+          <p>
+            Descarga una copia de {connections.length} {connections.length === 1 ? "perfil" : "perfiles"} para otra instalación de DByson.
+            Este archivo no concede acceso al equipo en este servidor.
+          </p>
+          <p className="muted">Las claves privadas SSH y sus frases de contraseña se adjuntan por separado.</p>
           <ul className="transfer-preview">
             {connections.map((c) => (
               <li key={c.id}>
@@ -72,9 +78,12 @@ export function ConnectionTransfer({
             ))}
           </ul>
           <label className="check">
-            <input type="checkbox" checked={secrets} onChange={(e) => setSecrets(e.target.checked)} disabled={busy} />
+            <input type="checkbox" checked={secrets} onChange={(e) => setSecrets(e.target.checked)} disabled={busy || !canExportSecrets} />
             Incluir contraseñas y certificados TLS en un paquete cifrado
           </label>
+          {!canExportSecrets && (
+            <p className="muted">Incluir credenciales requiere permiso para gestionar todas las conexiones seleccionadas.</p>
+          )}
           <p className="muted">
             {secrets
               ? "El receptor necesitará la frase de cifrado y su clave SSH. Comparte la frase por otro medio."
@@ -117,8 +126,8 @@ export function ConnectionTransfer({
             </div>
           )}
           <p className="muted">
-            Se crean copias nuevas. Las claves SSH no vienen incluidas: adjúntalas en Editar o usa la ruta del archivo en el servidor
-            receptor.
+            Se crean copias privadas nuevas, sin los permisos del equipo de origen. Las claves SSH no vienen incluidas: adjúntalas en Editar
+            o usa la ruta del archivo en el servidor receptor.
           </p>
         </>
       )}
@@ -145,7 +154,11 @@ export function ConnectionTransfer({
         <button
           className="primary"
           onClick={() => void run()}
-          disabled={busy || (mode === "export" && secrets && passphrase.length < 12) || (mode === "import" && !file)}
+          disabled={
+            busy ||
+            (mode === "export" && (!connections.length || (secrets && (!canExportSecrets || passphrase.length < 12)))) ||
+            (mode === "import" && !file)
+          }
         >
           {busy ? "Procesando…" : mode === "export" ? "Descargar archivo" : "Importar perfiles"}
         </button>

@@ -9,6 +9,9 @@ web/playwright-report
 web/test-results
 **/*.md
 .env
+**/.env
+**/*.env
+artifacts
 **/*.pem
 **/*.key
 **/*.p12

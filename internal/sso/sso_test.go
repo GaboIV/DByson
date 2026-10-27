@@ -88,7 +88,7 @@ func TestVerifyHappyPath(t *testing.T) {
 	fp := newFakeProvider(t)
 	p := providerFor(t, fp)
 	fp.token = fp.mint(baseClaims(fp.issuer))
-	raw, err := p.Exchange("any-code")
+	raw, err := p.Exchange("any-code", "verifier")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,14 @@ func TestVerifyRejects(t *testing.T) {
 	}
 	// Tampered signature.
 	good := fp.mint(baseClaims(fp.issuer))
-	tampered := good[:len(good)-2] + "AA"
+	parts := strings.Split(good, ".")
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature[0] ^= 1
+	parts[2] = base64.RawURLEncoding.EncodeToString(signature)
+	tampered := strings.Join(parts, ".")
 	if _, err := p.Verify(tampered, "test-nonce"); err == nil {
 		t.Fatal("tampered signature accepted")
 	}
@@ -142,11 +149,11 @@ func TestVerifyRejects(t *testing.T) {
 func TestAuthorizeURL(t *testing.T) {
 	fp := newFakeProvider(t)
 	p := providerFor(t, fp)
-	target, err := p.AuthorizeURL("state-1", "nonce-1")
+	target, err := p.AuthorizeURL("state-1", "nonce-1", "challenge-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"response_type=code", "client_id=test-client", "state=state-1", "nonce=nonce-1", "scope=openid"} {
+	for _, want := range []string{"response_type=code", "client_id=test-client", "state=state-1", "nonce=nonce-1", "scope=openid", "code_challenge=challenge-1", "code_challenge_method=S256"} {
 		if !strings.Contains(target, want) {
 			t.Fatalf("authorize URL missing %q: %s", want, target)
 		}
@@ -160,7 +167,66 @@ func TestDiscoveryIssuerMismatchFailsClosed(t *testing.T) {
 		RedirectURL: "http://example/callback",
 	}, fp.srv.Client())
 	fp.token = fp.mint(baseClaims(fp.issuer))
-	if _, err := p.Exchange("code"); err == nil {
+	if _, err := p.Exchange("code", "verifier"); err == nil {
 		t.Fatal("issuer mismatch accepted at discovery")
+	}
+}
+
+func TestConfigValidateRequiresDomainsForAutoProvision(t *testing.T) {
+	base := Config{Issuer: "https://accounts.google.com", ClientID: "c", ClientSecret: "s", AutoProvision: true}
+	if err := base.Validate(); err == nil {
+		t.Fatal("auto-provisioning without allowed domains must be rejected")
+	}
+	base.AllowedDomains = []string{"example.com"}
+	if err := base.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	base.AllowedDomains = []string{"@example.com"}
+	if err := base.Validate(); err == nil {
+		t.Fatal("malformed domain accepted")
+	}
+}
+
+func TestEmailAllowed(t *testing.T) {
+	c := Config{AllowedDomains: ParseDomains(" Example.com, corp.example ")}
+	for email, want := range map[string]bool{
+		"ana@example.com":      true,
+		"ANA@EXAMPLE.COM":      true,
+		"bob@corp.example":     true,
+		"eve@evil.com":         false,
+		"eve@sub.example.com":  false, // exact domains only
+		"eve@example.com.evil": false,
+		"not-an-email":         false,
+	} {
+		if got := c.EmailAllowed(email); got != want {
+			t.Errorf("EmailAllowed(%q) = %v, want %v", email, got, want)
+		}
+	}
+	if !(Config{}).EmailAllowed("anyone@anywhere") {
+		t.Fatal("no allowlist means no domain restriction")
+	}
+}
+
+func TestClaimsMFA(t *testing.T) {
+	if (&Claims{AMR: []string{"pwd"}}).MFA() {
+		t.Fatal("password alone is not MFA")
+	}
+	if !(&Claims{AMR: []string{"pwd", "otp"}}).MFA() || !(&Claims{AMR: []string{"MFA"}}).MFA() {
+		t.Fatal("otp/mfa must count as a second factor")
+	}
+}
+
+func TestVerifyRequiresNonce(t *testing.T) {
+	fp := newFakeProvider(t)
+	p := providerFor(t, fp)
+	if _, err := p.Verify(fp.mint(baseClaims(fp.issuer)), ""); err == nil {
+		t.Fatal("a token must never verify without an expected nonce")
+	}
+}
+
+func TestPKCE(t *testing.T) {
+	v, c, err := NewPKCE()
+	if err != nil || len(v) < 43 || c == "" || v == c {
+		t.Fatalf("bad PKCE pair %q %q %v", v, c, err)
 	}
 }

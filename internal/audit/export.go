@@ -139,18 +139,27 @@ func (l *Logger) PurgeOlderThan(ctx context.Context, cutoff int64) (PurgeResult,
 	}
 	defer tx.Rollback()
 
+	// Remove only the leading run of old entries, by id. Selecting by timestamp
+	// alone would punch holes in the chain whenever the clock moved backwards.
+	var lastID int64
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM audit_log
+		WHERE id < COALESCE((SELECT MIN(id) FROM audit_log WHERE at >= ?), 9223372036854775807)`, cutoff).
+		Scan(&lastID)
+	if err != nil {
+		return PurgeResult{}, err
+	}
+	if lastID == 0 {
+		return PurgeResult{}, nil
+	}
 	var (
 		count  int64
 		anchor string
 	)
-	err = tx.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(MAX(hash), '') FROM audit_log WHERE at < ?`, cutoff).
-		Scan(&count, &anchor)
-	if err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE id <= ?`, lastID).Scan(&count); err != nil {
 		return PurgeResult{}, err
 	}
-	if count == 0 {
-		return PurgeResult{}, nil
+	if err := tx.QueryRowContext(ctx, `SELECT hash FROM audit_log WHERE id = ?`, lastID).Scan(&anchor); err != nil {
+		return PurgeResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `DROP TRIGGER audit_log_no_delete`); err != nil {
 		return PurgeResult{}, err
@@ -158,7 +167,7 @@ func (l *Logger) PurgeOlderThan(ctx context.Context, cutoff int64) (PurgeResult,
 	if _, err := tx.ExecContext(ctx, `DROP TRIGGER audit_log_no_update`); err != nil {
 		return PurgeResult{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM audit_log WHERE at < ?`, cutoff); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM audit_log WHERE id <= ?`, lastID); err != nil {
 		return PurgeResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx, triggerNoUpdate); err != nil {
@@ -167,15 +176,17 @@ func (l *Logger) PurgeOlderThan(ctx context.Context, cutoff int64) (PurgeResult,
 	if _, err := tx.ExecContext(ctx, triggerNoDelete); err != nil {
 		return PurgeResult{}, err
 	}
-	var prev string
+	// Continue the chain from the newest remaining entry; when everything was
+	// purged, from the anchor itself, so the head still points at the purge.
+	prev := anchor
 	err = tx.QueryRowContext(ctx, `SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`).Scan(&prev)
 	if err != nil && err != sql.ErrNoRows {
 		return PurgeResult{}, err
 	}
 	e := Entry{
-		At:      time.Now().Unix(),
+		At:      l.Now().Unix(),
 		Action:  "audit.purged",
-		Detail:  truncate(fmt.Sprintf("retention: deleted %d entries before %s anchor=%s", count, time.Unix(cutoff, 0).UTC().Format(time.RFC3339), anchor), maxDetail),
+		Detail:  fmt.Sprintf("retention: deleted %d entries before %s %s%s", count, time.Unix(cutoff, 0).UTC().Format(time.RFC3339), purgeAnchorPrefix, anchor),
 		Outcome: OutcomeOK,
 	}
 	e.Hash = l.mac(prev, &e)

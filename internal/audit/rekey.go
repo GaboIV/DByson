@@ -9,23 +9,39 @@ import (
 	"time"
 )
 
-// Rekey rewrites the whole HMAC chain from oldKey to newKey and appends a
-// vault.key_rotated anchor entry naming both key fingerprints (never the
-// keys). It first verifies the old chain and refuses to touch a broken one.
-// Run it offline with the server stopped: it takes no lock against a running
-// server. Secret re-encryption is vault.RewrapSecrets, not this function.
+// Rekey rewrites the whole HMAC chain from oldKey to newKey in its own
+// transaction. Key rotation uses RekeyTx instead, so the chain and the vault
+// secrets change together or not at all.
 func Rekey(ctx context.Context, db *sql.DB, oldKey, newKey []byte) error {
-	oldL := &Logger{db: db, key: oldKey, Now: time.Now}
-	v, err := oldL.Verify(ctx)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("audit rekey: %w", err)
+	}
+	defer tx.Rollback()
+	if err := RekeyTx(ctx, tx, oldKey, newKey); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RekeyTx re-signs the chain inside tx and appends a vault.key_rotated entry
+// naming both key fingerprints (never the keys). oldKey and newKey are the audit
+// MAC keys (vault.DeriveKey("audit")), not the master keys. It verifies the old
+// chain first, refuses to touch a broken one, and verifies the new chain before
+// returning.
+// The head of a purged chain points at an external anchor (the hash of the last
+// purged entry, recorded in an audit.purged entry): it is kept as-is, because it
+// identifies data that no longer exists and cannot be re-signed.
+func RekeyTx(ctx context.Context, tx *sql.Tx, oldKey, newKey []byte) error {
+	v, err := verifyChain(ctx, tx, oldKey)
 	if err != nil {
 		return fmt.Errorf("audit rekey: %w", err)
 	}
 	if !v.OK {
 		return fmt.Errorf("audit rekey: chain is broken at entry %d, refusing to rotate", v.BrokenAt)
 	}
-	newL := &Logger{db: db, key: newKey, Now: time.Now}
 
-	rows, err := db.QueryContext(ctx, `SELECT id, at, COALESCE(user_id, 0), username, ip, action,
+	rows, err := tx.QueryContext(ctx, `SELECT id, at, COALESCE(user_id, 0), username, ip, action,
 		connection_id, target, detail, outcome FROM audit_log ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("audit rekey: %w", err)
@@ -49,31 +65,24 @@ func Rekey(ctx context.Context, db *sql.DB, oldKey, newKey []byte) error {
 		return fmt.Errorf("audit rekey: %w", err)
 	}
 
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("audit rekey: %w", err)
+	for _, stmt := range []string{`DROP TRIGGER audit_log_no_delete`, `DROP TRIGGER audit_log_no_update`} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("audit rekey: %w", err)
+		}
 	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DROP TRIGGER audit_log_no_delete`); err != nil {
-		return fmt.Errorf("audit rekey: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DROP TRIGGER audit_log_no_update`); err != nil {
-		return fmt.Errorf("audit rekey: %w", err)
-	}
-	prev := ""
+	prev := v.AnchoredAt // "" for an intact chain
 	for _, r := range entries {
-		r.e.Hash = newL.mac(prev, &r.e)
+		r.e.Hash = macWith(newKey, prev, &r.e)
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE audit_log SET prev_hash = ?, hash = ? WHERE id = ?`, prev, r.e.Hash, r.id); err != nil {
 			return fmt.Errorf("audit rekey: %w", err)
 		}
 		prev = r.e.Hash
 	}
-	if _, err := tx.ExecContext(ctx, triggerNoUpdate); err != nil {
-		return fmt.Errorf("audit rekey: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, triggerNoDelete); err != nil {
-		return fmt.Errorf("audit rekey: %w", err)
+	for _, stmt := range []string{triggerNoUpdate, triggerNoDelete} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("audit rekey: %w", err)
+		}
 	}
 	anchor := Entry{
 		At:      time.Now().Unix(),
@@ -81,14 +90,18 @@ func Rekey(ctx context.Context, db *sql.DB, oldKey, newKey []byte) error {
 		Detail:  fmt.Sprintf("master key rotated %s -> %s", shortKeyID(oldKey), shortKeyID(newKey)),
 		Outcome: OutcomeOK,
 	}
-	anchor.Hash = newL.mac(prev, &anchor)
+	anchor.Hash = macWith(newKey, prev, &anchor)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log
 		(at, user_id, username, ip, action, connection_id, target, detail, outcome, prev_hash, hash)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		anchor.At, nil, "", "", anchor.Action, "", "", anchor.Detail, anchor.Outcome, prev, anchor.Hash); err != nil {
 		return fmt.Errorf("audit rekey: %w", err)
 	}
-	return tx.Commit()
+	after, err := verifyChain(ctx, tx, newKey)
+	if err != nil || !after.OK {
+		return fmt.Errorf("audit rekey: rewritten chain does not verify (entry %d): %v", after.BrokenAt, err)
+	}
+	return nil
 }
 
 func shortKeyID(key []byte) string {

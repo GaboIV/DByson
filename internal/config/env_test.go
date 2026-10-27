@@ -13,7 +13,7 @@ func TestGetReadsCurrentName(t *testing.T) {
 }
 
 func TestLegacyNameIsIgnored(t *testing.T) {
-	// Since v1.0 ADMINBASE_* is not read anymore.
+	// ADMINBASE_* is not read anymore.
 	t.Setenv("ADMINBASE_PROBE_B", "old")
 	if got := Get("PROBE_B"); got != "" {
 		t.Fatalf("legacy variable leaked into config: %q", got)

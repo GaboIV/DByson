@@ -10,12 +10,14 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gaboiv/dbyson/internal/audit"
 	"github.com/gaboiv/dbyson/internal/sso"
+	"github.com/gaboiv/dbyson/internal/tunnel"
 )
 
 func createUser(t *testing.T, admin *client, username, password, role string) {
@@ -402,12 +404,36 @@ func oidcClaims(issuer, nonce string) map[string]any {
 
 func newOIDCEnv(t *testing.T, fp *fakeOIDC, autoProvision bool) *testEnv {
 	t.Helper()
-	return newTestEnvWith(t, func(d *Deps) {
-		d.OIDC = sso.NewWithClient(sso.Config{
-			Issuer: fp.issuer, ClientID: "test-client", ClientSecret: "secret",
-			RedirectURL: "http://example/callback", AutoProvision: autoProvision,
-		}, fp.srv.Client())
-	})
+	return newOIDCEnvWith(t, fp, sso.Config{AutoProvision: autoProvision, AllowedDomains: []string{"example.com"}})
+}
+
+func newOIDCEnvWith(t *testing.T, fp *fakeOIDC, cfg sso.Config) *testEnv {
+	t.Helper()
+	cfg.Issuer, cfg.ClientID, cfg.ClientSecret, cfg.RedirectURL = fp.issuer, "test-client", "secret", "http://example/callback"
+	return newTestEnvWith(t, func(d *Deps) { d.OIDC = sso.NewWithClient(cfg, fp.srv.Client()) })
+}
+
+// oidcBegin starts an SSO login through the real endpoint, as a browser would:
+// the state cookie lands in c's jar. It returns the state and nonce sent to the provider.
+func oidcBegin(t *testing.T, c *client) (state, nonce string) {
+	t.Helper()
+	rec := c.do("GET", "/api/auth/oidc/login", nil)
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if rec.Code != http.StatusFound || err != nil {
+		t.Fatalf("oidc login: %d %v", rec.Code, err)
+	}
+	q := loc.Query()
+	if q.Get("code_challenge") == "" || q.Get("code_challenge_method") != "S256" {
+		t.Fatalf("authorize request without PKCE: %s", loc)
+	}
+	return q.Get("state"), q.Get("nonce")
+}
+
+// oidcFinish completes the login with the given claims and returns the callback response.
+func oidcFinish(t *testing.T, c *client, fp *fakeOIDC, state string, claims map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	fp.token = fp.mint(claims)
+	return c.do("GET", "/api/auth/oidc/callback?code=x&state="+state, nil)
 }
 
 func TestTeamOIDCLoginAndLink(t *testing.T) {
@@ -420,12 +446,8 @@ func TestTeamOIDCLoginAndLink(t *testing.T) {
 	}
 
 	c := e.client()
-	state, nonce, err := e.srv.oidcStates.create()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fp.token = fp.mint(oidcClaims(fp.issuer, nonce))
-	cb := c.do("GET", "/api/auth/oidc/callback?code=anything&state="+state, nil)
+	state, nonce := oidcBegin(t, c)
+	cb := oidcFinish(t, c, fp, state, oidcClaims(fp.issuer, nonce))
 	if cb.Code != http.StatusFound || cb.Header().Get("Location") != "/" {
 		t.Fatalf("callback: %d %q", cb.Code, cb.Header().Get("Location"))
 	}
@@ -441,27 +463,59 @@ func TestTeamOIDCLoginAndLink(t *testing.T) {
 
 	// Signing in again links the same account instead of creating another user.
 	c2 := e.client()
-	state2, nonce2, _ := e.srv.oidcStates.create()
-	fp.token = fp.mint(oidcClaims(fp.issuer, nonce2))
-	if cb := c2.do("GET", "/api/auth/oidc/callback?code=x&state="+state2, nil); cb.Code != http.StatusFound {
-		t.Fatalf("second callback: %d", cb.Code)
+	state2, nonce2 := oidcBegin(t, c2)
+	if cb := oidcFinish(t, c2, fp, state2, oidcClaims(fp.issuer, nonce2)); cb.Code != http.StatusFound || cb.Header().Get("Location") != "/" {
+		t.Fatalf("second callback: %d %q", cb.Code, cb.Header().Get("Location"))
 	}
 	e.store.DB.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&users)
 	if users != 1 {
 		t.Fatalf("second SSO sign-in duplicated the user (users=%d)", users)
 	}
 
-	// Replayed states and forged tokens fail closed, back in the app.
-	cb = e.client().do("GET", "/api/auth/oidc/callback?code=x&state="+state, nil)
-	if cb.Code != http.StatusFound || !strings.HasPrefix(cb.Header().Get("Location"), "/?sso=error") {
-		t.Fatalf("replayed state: %d %q", cb.Code, cb.Header().Get("Location"))
-	}
-	state3, nonce3, _ := e.srv.oidcStates.create()
+	// Forged tokens fail closed, back in the app.
+	c3 := e.client()
+	state3, nonce3 := oidcBegin(t, c3)
 	bad := fp.mint(oidcClaims(fp.issuer, nonce3))
-	fp.token = bad[:len(bad)-2] + "AA"
-	cb = e.client().do("GET", "/api/auth/oidc/callback?code=x&state="+state3, nil)
+	// Change an actual signature byte. Replacing a base64 suffix can leave the
+	// signature unchanged, depending on the original byte and unused pad bits.
+	parts := strings.Split(bad, ".")
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature[0] ^= 1
+	parts[2] = base64.RawURLEncoding.EncodeToString(signature)
+	fp.token = strings.Join(parts, ".")
+	cb = c3.do("GET", "/api/auth/oidc/callback?code=x&state="+state3, nil)
 	if cb.Code != http.StatusFound || !strings.HasPrefix(cb.Header().Get("Location"), "/?sso=error") {
 		t.Fatalf("forged token: %d %q", cb.Code, cb.Header().Get("Location"))
+	}
+}
+
+// A callback only completes in the browser that started the login: otherwise an
+// attacker could send a victim their own callback URL and sign them in as the
+// attacker (login CSRF). States are also single-use.
+func TestTeamOIDCStateIsBoundToTheBrowser(t *testing.T) {
+	fp := newFakeOIDC(t)
+	e := newOIDCEnv(t, fp, true)
+	attacker := e.client()
+	state, nonce := oidcBegin(t, attacker)
+	victim := e.client()
+	cb := oidcFinish(t, victim, fp, state, oidcClaims(fp.issuer, nonce))
+	if !strings.HasPrefix(cb.Header().Get("Location"), "/?sso=error") || victim.cookie != nil {
+		t.Fatalf("callback accepted without the state cookie: %q", cb.Header().Get("Location"))
+	}
+	// A consumed state cannot be replayed, even with its cookie.
+	ok := e.client()
+	s2, n2 := oidcBegin(t, ok)
+	stateCookie := ok.jar[oidcStateCookie]
+	if cb := oidcFinish(t, ok, fp, s2, oidcClaims(fp.issuer, n2)); cb.Header().Get("Location") != "/" {
+		t.Fatalf("legit login failed: %q", cb.Header().Get("Location"))
+	}
+	replay := e.client()
+	replay.jar = map[string]*http.Cookie{oidcStateCookie: stateCookie}
+	if cb := oidcFinish(t, replay, fp, s2, oidcClaims(fp.issuer, n2)); !strings.HasPrefix(cb.Header().Get("Location"), "/?sso=error") {
+		t.Fatalf("replayed state accepted: %q", cb.Header().Get("Location"))
 	}
 }
 
@@ -469,11 +523,89 @@ func TestTeamOIDCRequiresProvisioning(t *testing.T) {
 	fp := newFakeOIDC(t)
 	e := newOIDCEnv(t, fp, false)
 	c := e.client()
-	state, nonce, _ := e.srv.oidcStates.create()
-	fp.token = fp.mint(oidcClaims(fp.issuer, nonce))
-	cb := c.do("GET", "/api/auth/oidc/callback?code=x&state="+state, nil)
+	state, nonce := oidcBegin(t, c)
+	cb := oidcFinish(t, c, fp, state, oidcClaims(fp.issuer, nonce))
 	if cb.Code != http.StatusFound || !strings.Contains(cb.Header().Get("Location"), "reason=provisioned") {
 		t.Fatalf("unprovisioned SSO: %d %q", cb.Code, cb.Header().Get("Location"))
+	}
+}
+
+// Without auto-provisioning, an admin prepares the account with the person's email
+// and SSO links to it (case-insensitively). Ambiguous emails and foreign domains never link.
+func TestTeamOIDCLinksPreparedAccounts(t *testing.T) {
+	fp := newFakeOIDC(t)
+	e := newOIDCEnv(t, fp, false)
+	admin := e.client()
+	e.setupAdmin(admin)
+	if rec := admin.do("POST", "/api/users", map[string]string{"username": "ana", "password": "ana-password-123", "role": "member", "email": "SSO@Example.com"}); rec.Code != http.StatusCreated {
+		t.Fatalf("create user: %d", rec.Code)
+	}
+	c := e.client()
+	state, nonce := oidcBegin(t, c)
+	if cb := oidcFinish(t, c, fp, state, oidcClaims(fp.issuer, nonce)); cb.Header().Get("Location") != "/" {
+		t.Fatalf("prepared account not linked: %q", cb.Header().Get("Location"))
+	}
+	if me := c.do("GET", "/api/auth/me", nil); !strings.Contains(me.Body.String(), `"username":"ana"`) {
+		t.Fatalf("linked to the wrong account: %s", me.Body.String())
+	}
+
+	// Two accounts with the same email make the match ambiguous: no link.
+	for _, u := range []string{"dup1", "dup2"} {
+		if rec := admin.do("POST", "/api/users", map[string]string{"username": u, "password": u + "-password-123", "role": "member", "email": "Dup@example.com"}); rec.Code != http.StatusCreated {
+			t.Fatalf("create %s: %d", u, rec.Code)
+		}
+	}
+	c2 := e.client()
+	s2, n2 := oidcBegin(t, c2)
+	dup := oidcClaims(fp.issuer, n2)
+	dup["sub"], dup["email"] = "someone-else", "dup@example.com"
+	if cb := oidcFinish(t, c2, fp, s2, dup); !strings.Contains(cb.Header().Get("Location"), "reason=provisioned") {
+		t.Fatalf("ambiguous email linked: %q", cb.Header().Get("Location"))
+	}
+
+	// Emails outside the allowed domains are refused before any lookup.
+	c3 := e.client()
+	s3, n3 := oidcBegin(t, c3)
+	foreign := oidcClaims(fp.issuer, n3)
+	foreign["sub"], foreign["email"] = "outsider", "eve@evil.com"
+	if cb := oidcFinish(t, c3, fp, s3, foreign); !strings.Contains(cb.Header().Get("Location"), "reason=domain") {
+		t.Fatalf("foreign domain accepted: %q", cb.Header().Get("Location"))
+	}
+}
+
+// SSO proves the identity, not the account's own second factor: an account with
+// local 2FA is asked for it unless the provider reports MFA in amr.
+func TestTeamOIDCKeepsLocalTwoFactor(t *testing.T) {
+	fp := newFakeOIDC(t)
+	e := newOIDCEnv(t, fp, false)
+	admin := e.client()
+	e.setupAdmin(admin)
+	_, recovery := enrollMFA(t, admin)
+	if rec := admin.do("PUT", "/api/users/"+itoa(userID(t, e, admin, "admin")), map[string]string{"email": "sso@example.com"}); rec.Code != http.StatusOK {
+		t.Fatalf("set email: %d %s", rec.Code, rec.Body.String())
+	}
+
+	c := e.client()
+	state, nonce := oidcBegin(t, c)
+	cb := oidcFinish(t, c, fp, state, oidcClaims(fp.issuer, nonce))
+	if cb.Header().Get("Location") != "/?sso=mfa" || c.cookie != nil || c.jar[mfaPendingCookie] == nil {
+		t.Fatalf("local 2FA skipped by SSO: %q cookie=%v", cb.Header().Get("Location"), c.cookie)
+	}
+	rec := c.do("POST", "/api/auth/mfa/verify", map[string]string{"code": recovery[0]})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"mfa":true`) {
+		t.Fatalf("second factor after SSO: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// A provider that reports MFA signs in directly with a verified session.
+	c2 := e.client()
+	s2, n2 := oidcBegin(t, c2)
+	withMFA := oidcClaims(fp.issuer, n2)
+	withMFA["amr"] = []string{"pwd", "mfa"}
+	if cb := oidcFinish(t, c2, fp, s2, withMFA); cb.Header().Get("Location") != "/" {
+		t.Fatalf("provider MFA not honoured: %q", cb.Header().Get("Location"))
+	}
+	if me := c2.do("GET", "/api/auth/me", nil); !strings.Contains(me.Body.String(), `"mfa":true`) {
+		t.Fatalf("session not marked as MFA: %s", me.Body.String())
 	}
 }
 
@@ -508,4 +640,122 @@ func itoa(n int64) string {
 		b[i] = '-'
 	}
 	return string(b[i:])
+}
+
+// A manage grant lets someone edit a shared profile, not walk away with its stored
+// password: a draft or an edit aimed at another destination never reuses it.
+func TestTeamGranteesCannotRedirectStoredSecrets(t *testing.T) {
+	e := newTestEnv(t)
+	admin := e.client()
+	e.setupAdmin(admin)
+	createUser(t, admin, "member1", "member-password-123", "member")
+	member := loginAs(t, e, "member1", "member-password-123")
+	rec := admin.do("POST", "/api/connections", map[string]any{
+		"name": "team-db", "env": "dev", "host": "db.internal", "username": "app",
+		"password": "TopSecret-123", "tlsMode": "verify_identity", "readOnly": true, "shared": true,
+	})
+	var shared connView
+	json.Unmarshal(rec.Body.Bytes(), &shared)
+	m1 := userID(t, e, admin, "member1")
+	grant := func(level string) {
+		t.Helper()
+		if rec := admin.do("POST", "/api/connections/"+shared.ID+"/grants", map[string]any{"userId": m1, "level": level}); rec.Code != http.StatusCreated {
+			t.Fatalf("grant %s: %d", level, rec.Code)
+		}
+	}
+	draft := map[string]any{"name": "x", "env": "dev", "host": "attacker.example", "username": "app", "tlsMode": "required"}
+
+	grant(GrantUse)
+	if rec := member.do("POST", "/api/connections/"+shared.ID+"/test-draft", draft); rec.Code != http.StatusNotFound {
+		t.Fatalf("a use grant must not test drafts with the stored secrets: %d", rec.Code)
+	}
+	if rec := member.do("POST", "/api/connections/"+shared.ID+"/ssh/fingerprint", map[string]any{"host": "attacker.example"}); rec.Code != http.StatusNotFound {
+		t.Fatalf("a use grant must not reach the stored bastion: %d", rec.Code)
+	}
+
+	grant(GrantManage)
+	base := map[string]any{"name": "team-db", "env": "dev", "host": "db.internal", "username": "app", "tlsMode": "verify_identity", "readOnly": true}
+	for field, value := range map[string]any{"env": "staging", "readOnly": false, "tlsMode": "required"} {
+		body := map[string]any{}
+		for k, v := range base {
+			body[k] = v
+		}
+		body[field] = value
+		if rec := member.do("PUT", "/api/connections/"+shared.ID, body); rec.Code != http.StatusForbidden {
+			t.Fatalf("manage grantee lowered %s: %d %s", field, rec.Code, rec.Body.String())
+		}
+	}
+	// Re-pointing the profile drops the stored password instead of carrying it along.
+	moved := map[string]any{"name": "team-db", "env": "dev", "host": "elsewhere.example", "username": "app", "tlsMode": "verify_identity", "readOnly": true}
+	rec = member.do("PUT", "/api/connections/"+shared.ID, moved)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"hasPassword":false`) {
+		t.Fatalf("stored password must not follow a new destination: %d %s", rec.Code, rec.Body.String())
+	}
+	// Owners and admins keep full control of their own profiles.
+	rec = admin.do("PUT", "/api/connections/"+shared.ID, map[string]any{"name": "team-db", "env": "staging", "host": "db.internal", "username": "app", "password": "TopSecret-123", "tlsMode": "required"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin edit: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Viewers never open prod, including connections they owned before a demotion.
+func TestTeamDemotedViewerCannotOpenOwnProd(t *testing.T) {
+	e := newTestEnv(t)
+	admin := e.client()
+	e.setupAdmin(admin)
+	createUser(t, admin, "dana", "dana-password-1234", "member")
+	dana := loginAs(t, e, "dana", "dana-password-1234")
+	prod := createConn(t, dana, "dana-prod", "prod", nil)
+	if rec := admin.do("PUT", "/api/users/"+itoa(userID(t, e, admin, "dana")), map[string]any{"role": "viewer"}); rec.Code != http.StatusOK {
+		t.Fatalf("demote: %d", rec.Code)
+	}
+	if rec := dana.do("POST", "/api/connections/"+prod.ID+"/test", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("demoted viewer opened their prod connection: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDestinationChanged(t *testing.T) {
+	rec := &connRecord{Host: "db", Port: 3306, Username: "app"}
+	jump := tunnel.Hop{Host: "bastion", Port: 22, User: "ops"}
+	stored := secretBlob{SSH: tunnel.Config{Enabled: true, Hop: tunnel.Hop{Host: "ssh", Port: 22, User: "ops"}, Jump: &jump}}
+	same := connInput{Host: "db", Port: 3306, Username: "app",
+		SSH: &tunnel.Config{Enabled: true, Hop: tunnel.Hop{Host: "ssh", Port: 22, User: "ops"}, Jump: &tunnel.Hop{Host: "bastion", Port: 22, User: "ops"}}}
+	if destinationChanged(rec, stored, same) {
+		t.Fatal("identical destination reported as changed")
+	}
+	for name, mutate := range map[string]func(*connInput){
+		"mysql host": func(in *connInput) { in.Host = "evil" },
+		"mysql user": func(in *connInput) { in.Username = "root" },
+		"ssh host":   func(in *connInput) { s := *in.SSH; s.Hop.Host = "evil"; in.SSH = &s },
+		"jump host":  func(in *connInput) { s := *in.SSH; j := *s.Jump; j.Host = "evil"; s.Jump = &j; in.SSH = &s },
+		"jump drop":  func(in *connInput) { s := *in.SSH; s.Jump = nil; in.SSH = &s },
+	} {
+		in := same
+		mutate(&in)
+		if !destinationChanged(rec, stored, in) {
+			t.Errorf("%s change not detected", name)
+		}
+	}
+}
+
+// An update is all-or-nothing: an invalid field must not leave the account
+// half-changed or log its sessions out.
+func TestTeamUpdateUserValidatesBeforeApplying(t *testing.T) {
+	e := newTestEnv(t)
+	admin := e.client()
+	e.setupAdmin(admin)
+	createUser(t, admin, "bea", "bea-password-12345", "member")
+	bea := loginAs(t, e, "bea", "bea-password-12345")
+	id := itoa(userID(t, e, admin, "bea"))
+	rec := admin.do("PUT", "/api/users/"+id, map[string]any{"password": "new-password-12345", "email": "not-an-email"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid email accepted: %d", rec.Code)
+	}
+	if rec := bea.do("GET", "/api/auth/me", nil); rec.Code != http.StatusOK {
+		t.Fatalf("a rejected update logged the user out: %d", rec.Code)
+	}
+	loginAs(t, e, "bea", "bea-password-12345") // password unchanged
+	if rec := admin.do("PUT", "/api/users/"+itoa(userID(t, e, admin, "admin")), map[string]any{"role": "member"}); rec.Code != http.StatusConflict {
+		t.Fatalf("last admin demoted: %d", rec.Code)
+	}
 }

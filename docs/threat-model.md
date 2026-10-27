@@ -46,8 +46,10 @@ Estado: ✅ implementado · 🟡 parcial · ⬜ pendiente.
 | Robo de cookie de sesión | `HttpOnly`, `SameSite=Strict`, `Secure` bajo HTTPS; solo el hash del token en SQLite; expiración por inactividad (2 h) y absoluta (12 h) | ✅ |
 | Servidor MySQL suplantado (MITM) | TLS `verify_identity` por defecto, CA propia, certificado de cliente | ✅ |
 | Servidor SSH suplantado | Huella SHA-256 fijada; un cambio bloquea la conexión | ✅ |
-| Acceso sin certificado de cliente a DByson (mTLS) | — | ⬜ Fase 2 |
-| SSO corporativo (OIDC) | — | ⬜ Fase 4 |
+| Acceso sin certificado de cliente a DByson (mTLS) | Listener TLS nativo con CA de clientes (`DBYSON_TLS_CLIENT_CA_FILE`) | ✅ |
+| SSO corporativo (OIDC) | Flujo de código con PKCE, `state` ligado al navegador por cookie, `nonce` obligatorio, RS256 contra JWKS (≥2048 bits), `iss`/`aud`/`exp` verificados | ✅ |
+| Cuentas ajenas entrando por SSO | `DBYSON_OIDC_ALLOWED_DOMAINS` (obligatorio para auto-aprovisionar), solo emails verificados, vínculo por email solo con coincidencia única | ✅ |
+| SSO como atajo para saltarse la 2FA local | Tras el SSO se pide el código si la cuenta tiene 2FA, salvo MFA declarada por el proveedor (`amr`) o `DBYSON_OIDC_TRUST_MFA` | ✅ |
 
 ### T — Manipulación
 
@@ -98,7 +100,9 @@ Estado: ✅ implementado · 🟡 parcial · ⬜ pendiente.
 | Escribir en una conexión de solo lectura | `SET SESSION TRANSACTION READ ONLY` en cada conexión física + lista de sentencias permitidas | ✅ (la barrera real es un usuario MySQL sin permisos de escritura) |
 | Acceso al socket de Docker (= root en el host) | Sidecar aislado en red interna, solo dos GET de lectura con campos filtrados; opcional | ✅ |
 | Contenedor comprometido escala al host | Imagen distroless, usuario no-root, sin shell; recomendado `read_only` y `cap_drop: ALL` | ✅ |
-| Roles y permisos por conexión en modo equipo | — | ⬜ Fase 4 |
+| Roles y permisos por conexión en modo equipo | Roles `admin`/`member`/`viewer` y permisos `use`/`manage` aplicados en el servidor; IDs ajenos responden 404 | ✅ |
+| Un permiso `use`/`manage` usado para llevarse credenciales guardadas | Probar borradores con lo guardado exige `manage`; para quien no es dueño ni `admin`, las credenciales guardadas solo viajan a su destino original y no puede rebajar entorno, solo lectura ni TLS | ✅ |
+| `viewer` abriendo `prod` | Prohibido siempre, también en conexiones propias | ✅ |
 
 ## 4. Riesgos residuales aceptados (v0.1)
 
@@ -110,6 +114,4 @@ Estado: ✅ implementado · 🟡 parcial · ⬜ pendiente.
 ## 5. Antes de la v1.0
 
 - Pentest externo y revisión de este documento.
-- mTLS de acceso, SSO OIDC, RBAC por conexión.
-- Exportación de auditoría y anclaje del último hash.
-- Cancelación real de consultas (`KILL QUERY`).
+- Anclaje externo del último hash de auditoría (detectar el truncado del final).

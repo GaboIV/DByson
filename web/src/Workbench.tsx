@@ -8,7 +8,8 @@ import { Connections } from "./Connections";
 import { Dialog } from "./Dialog";
 import { useConfirm } from "./Confirm";
 import { PreferencesDialog, QueryHistoryDialog, usePreferences } from "./Preferences";
-import { AuditDialog, SecurityDialog, TeamDialog } from "./Security";
+import { AuditDialog, SecurityDialog } from "./Security";
+import { TeamDialog } from "./Team";
 import { TabStrip, type TabItem } from "./TabStrip";
 import { Workspace, type WorkspaceView } from "./Workspace";
 import { MAX_GROUPS, MAX_TABS, restoreActiveTab, restoreTabs, scope, type WorkTab } from "./workTabs";
@@ -409,6 +410,7 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
             storageKey={storageKey}
             startNew={newConnection > 0}
             isAdmin={session.role === "admin"}
+            isViewer={session.role === "viewer"}
             onSelect={(c) => open(c)}
           />
         </main>
@@ -494,7 +496,7 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
         />
       )}
       {audit && <AuditDialog connections={connections} onClose={() => setAudit(false)} />}
-      {team && <TeamDialog onClose={() => setTeam(false)} />}
+      {team && <TeamDialog username={session.username} onClose={() => setTeam(false)} />}
       {settings && (
         <PreferencesDialog
           onClose={() => setSettings(false)}
