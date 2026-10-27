@@ -130,7 +130,14 @@ func TestVerifyRejects(t *testing.T) {
 	}
 	// Tampered signature.
 	good := fp.mint(baseClaims(fp.issuer))
-	tampered := good[:len(good)-2] + "AA"
+	parts := strings.Split(good, ".")
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature[0] ^= 1
+	parts[2] = base64.RawURLEncoding.EncodeToString(signature)
+	tampered := strings.Join(parts, ".")
 	if _, err := p.Verify(tampered, "test-nonce"); err == nil {
 		t.Fatal("tampered signature accepted")
 	}

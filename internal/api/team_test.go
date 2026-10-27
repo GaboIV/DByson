@@ -476,7 +476,16 @@ func TestTeamOIDCLoginAndLink(t *testing.T) {
 	c3 := e.client()
 	state3, nonce3 := oidcBegin(t, c3)
 	bad := fp.mint(oidcClaims(fp.issuer, nonce3))
-	fp.token = bad[:len(bad)-2] + "AA"
+	// Change an actual signature byte. Replacing a base64 suffix can leave the
+	// signature unchanged, depending on the original byte and unused pad bits.
+	parts := strings.Split(bad, ".")
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature[0] ^= 1
+	parts[2] = base64.RawURLEncoding.EncodeToString(signature)
+	fp.token = strings.Join(parts, ".")
 	cb = c3.do("GET", "/api/auth/oidc/callback?code=x&state="+state3, nil)
 	if cb.Code != http.StatusFound || !strings.HasPrefix(cb.Header().Get("Location"), "/?sso=error") {
 		t.Fatalf("forged token: %d %q", cb.Code, cb.Header().Get("Location"))
