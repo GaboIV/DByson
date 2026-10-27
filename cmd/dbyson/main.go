@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/gaboiv/dbyson/internal/api"
 	"github.com/gaboiv/dbyson/internal/audit"
+	"github.com/gaboiv/dbyson/internal/auth"
 	"github.com/gaboiv/dbyson/internal/config"
 	"github.com/gaboiv/dbyson/internal/policy"
 	"github.com/gaboiv/dbyson/internal/sso"
@@ -97,6 +99,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	trustedProxies, err := parseTrustedProxies(config.Get("TRUSTED_PROXIES"))
+	if err != nil {
+		return err
+	}
 	if mode == modePersonal && !isLoopback(addr) {
 		log.Warn("personal mode without required 2FA: publish the port on 127.0.0.1 only, or set DBYSON_MODE=team",
 			"addr", addr)
@@ -139,6 +145,7 @@ func run(log *slog.Logger) error {
 			MFAPolicy:             mfaPolicy,
 			OIDC:                  oidc,
 			PasswordLoginDisabled: passwordLoginDisabled,
+			TrustedProxies:        trustedProxies,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -147,6 +154,24 @@ func run(log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Expired sessions are already rejected on use; reap them so the table does
+	// not grow without bound over a long-lived deployment.
+	go func() {
+		sessions := auth.NewSessions(st.DB)
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			if err := sessions.PurgeExpired(context.Background()); err != nil {
+				log.Warn("session purge failed", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
 
 	errc := make(chan error, 1)
 	go func() {
@@ -233,4 +258,31 @@ func isLoopback(addr string) bool {
 func envBool(name string) bool {
 	v := config.Get(name)
 	return v == "true" || v == "1"
+}
+
+// parseTrustedProxies reads DBYSON_TRUSTED_PROXIES: a comma-separated list of
+// CIDRs or bare IPs whose X-Forwarded-For / X-Forwarded-Proto headers are
+// believed. A bare IP becomes a single-host prefix. Empty means trust none.
+func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "/") {
+			p, err := netip.ParsePrefix(part)
+			if err != nil {
+				return nil, fmt.Errorf("DBYSON_TRUSTED_PROXIES: %q is not a valid CIDR: %w", part, err)
+			}
+			out = append(out, p)
+			continue
+		}
+		addr, err := netip.ParseAddr(part)
+		if err != nil {
+			return nil, fmt.Errorf("DBYSON_TRUSTED_PROXIES: %q is not a valid IP: %w", part, err)
+		}
+		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return out, nil
 }

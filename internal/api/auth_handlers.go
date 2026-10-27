@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +36,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 		}
 		sess, err := s.sessions.Lookup(r.Context(), c.Value)
 		if err != nil || sess.ClientCert != clientCertificate(r) {
-			clearCookie(w, r)
+			s.clearCookie(w, r)
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
@@ -46,7 +47,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 			action = r.Pattern
 		}
 		rec := &auditRecord{entry: audit.Entry{
-			UserID: sess.UserID, Username: sess.Username, IP: clientIP(r), Action: action,
+			UserID: sess.UserID, Username: sess.Username, IP: s.clientIP(r), Action: action,
 			ConnectionID: r.PathValue("id"), Target: auditTarget(r),
 		}}
 		ctx = context.WithValue(ctx, auditKey{}, rec)
@@ -76,8 +77,41 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.Handler {
 	})
 }
 
-func isHTTPS(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+func (s *Server) isHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	// Believe X-Forwarded-Proto only from a configured proxy. When none is set we
+	// keep trusting it, so existing TLS-terminating deployments do not regress.
+	if len(s.TrustedProxies) == 0 || s.peerIsTrustedProxy(r) {
+		return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	}
+	return false
+}
+
+// peerIsTrustedProxy reports whether the socket peer is a configured proxy.
+func (s *Server) peerIsTrustedProxy(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return s.isTrustedProxy(host)
+}
+
+func (s *Server) isTrustedProxy(ip string) bool {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return false
+	}
+	// A dual-stack listener reports an IPv4 peer as ::ffff:a.b.c.d; unmap it so an
+	// IPv4 trusted-proxy CIDR still matches (Prefix.Contains needs same family).
+	addr = addr.Unmap()
+	for _, p := range s.TrustedProxies {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func clientCertificate(r *http.Request) string {
@@ -88,31 +122,44 @@ func clientCertificate(r *http.Request) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func setCookie(w http.ResponseWriter, r *http.Request, token string) {
+func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, token string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isHTTPS(r),
+		Secure:   s.isHTTPS(r),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(auth.AbsoluteTimeout.Seconds()),
 	})
 }
 
-func clearCookie(w http.ResponseWriter, r *http.Request) {
+func (s *Server) clearCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieName, Value: "", Path: "/", HttpOnly: true,
-		Secure: isHTTPS(r), SameSite: http.SameSiteStrictMode, MaxAge: -1,
+		Secure: s.isHTTPS(r), SameSite: http.SameSiteStrictMode, MaxAge: -1,
 	})
 }
 
-// clientIP uses the socket address only. X-Forwarded-For is deliberately ignored: trusting it
-// would let an attacker rotate the header to dodge login throttling.
-func clientIP(r *http.Request) string {
+// clientIP returns the socket peer by default, so a spoofed X-Forwarded-For can
+// neither forge an audit IP nor collapse everyone onto one throttle bucket. When
+// the peer is a configured trusted proxy, it instead returns the rightmost
+// forwarded address that is not itself a trusted proxy: the real client as the
+// outermost trusted hop saw it.
+func (s *Server) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if !s.isTrustedProxy(host) {
+		return host
+	}
+	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		ip := strings.TrimSpace(parts[i])
+		if ip != "" && !s.isTrustedProxy(ip) {
+			return ip
+		}
 	}
 	return host
 }
@@ -133,12 +180,12 @@ func (s *Server) sessionView(ctx context.Context, userID int64, username, role, 
 }
 
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int64, username, role string, mfa bool) {
-	token, csrf, err := s.sessions.CreateWithDetails(r.Context(), userID, mfa, auth.SessionDetails{IP: clientIP(r), UserAgent: truncateRunes(r.UserAgent(), 512), ClientCert: clientCertificate(r)})
+	token, csrf, err := s.sessions.CreateWithDetails(r.Context(), userID, mfa, auth.SessionDetails{IP: s.clientIP(r), UserAgent: truncateRunes(r.UserAgent(), 512), ClientCert: clientCertificate(r)})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
 	}
-	setCookie(w, r, token)
+	s.setCookie(w, r, token)
 	writeJSON(w, http.StatusOK, s.sessionView(r.Context(), userID, username, role, csrf, mfa))
 }
 
@@ -184,7 +231,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	key := "setup|" + clientIP(r)
+	key := "setup|" + s.clientIP(r)
 	if blocked, wait := s.throttle.Blocked(key); blocked {
 		tooManyAttempts(w, wait)
 		return
@@ -222,7 +269,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
-	s.record(r.Context(), audit.Entry{UserID: id, Username: in.Username, IP: clientIP(r), Action: "auth.setup", Outcome: audit.OutcomeOK})
+	s.record(r.Context(), audit.Entry{UserID: id, Username: in.Username, IP: s.clientIP(r), Action: "auth.setup", Outcome: audit.OutcomeOK})
 	s.startSession(w, r, id, in.Username, "admin", false)
 }
 
@@ -233,7 +280,7 @@ func tooManyAttempts(w http.ResponseWriter, wait time.Duration) {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.PasswordLoginDisabled {
-		s.record(r.Context(), audit.Entry{IP: clientIP(r), Action: "auth.login", Outcome: audit.OutcomeDenied, Detail: "password sign-in disabled"})
+		s.record(r.Context(), audit.Entry{IP: s.clientIP(r), Action: "auth.login", Outcome: audit.OutcomeDenied, Detail: "password sign-in disabled"})
 		writeError(w, http.StatusForbidden, "password sign-in is disabled; use the configured identity provider")
 		return
 	}
@@ -241,7 +288,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	userKey := "login|" + ip + "|" + strings.ToLower(in.Username)
 	ipKey := "login|" + ip
 	attempt := audit.Entry{Username: truncateRunes(in.Username, 64), IP: ip, Action: "auth.login"}
@@ -320,7 +367,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieName); err == nil {
 		_ = s.sessions.Delete(r.Context(), c.Value)
 	}
-	clearCookie(w, r)
+	s.clearCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

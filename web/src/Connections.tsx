@@ -293,10 +293,7 @@ export function Connections({ onSelect, storageKey = "dbyson", startNew = false,
           connections={(items || []).filter((c) => selected.includes(c.id))}
           onClose={() => setTransfer(null)}
           onImported={() => void load()}
-          canExportSecrets={
-            !isViewer &&
-            (items || []).filter((c) => selected.includes(c.id)).every((c) => isAdmin || c.access === "owner" || c.access === "manage")
-          }
+          canExportSecrets={!isViewer && (items || []).filter((c) => selected.includes(c.id)).every((c) => isAdmin || c.access === "owner")}
         />
       )}
     </section>

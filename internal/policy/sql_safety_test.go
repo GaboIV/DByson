@@ -32,6 +32,26 @@ func TestSQLSafetyBoundaries(t *testing.T) {
 	}
 }
 
+func TestReadOnlyRejectsHintsAndQuotedFunctions(t *testing.T) {
+	// Optimizer hints (SET_VAR changes session variables) and functions named
+	// through double quotes under ANSI_QUOTES must not slip past read-only.
+	for _, query := range []string{
+		"SELECT /*+ SET_VAR(sort_buffer_size=1000000000) */ 1",
+		"SELECT /*+ MAX_EXECUTION_TIME(1) */ * FROM t",
+		`SELECT "SLEEP"(5)`,
+		`SELECT "LOAD_FILE"('/etc/passwd')`,
+		"SELECT SOURCE_POS_WAIT('x', 1)",
+	} {
+		if !IsReadOnlyViolation(query) {
+			t.Errorf("read-only accepted %q", query)
+		}
+	}
+	// A hint delimiter inside a string literal is not a hint.
+	if IsReadOnlyViolation("SELECT '/*+ not a hint */' AS note") {
+		t.Error("read-only rejected a hint-looking string literal")
+	}
+}
+
 func TestWhereMustBelongToMainStatement(t *testing.T) {
 	for _, query := range []string{
 		"UPDATE t SET value='WHERE'", "UPDATE t SET value=(SELECT n FROM x WHERE id=1)",

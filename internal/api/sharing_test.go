@@ -132,3 +132,53 @@ func TestSharingVisibilityAndDirectory(t *testing.T) {
 		t.Fatalf("missing connection: %d", rec.Code)
 	}
 }
+
+// A manage grant lets someone edit a shared profile in place, not carry its
+// stored credentials off in an export. Only the owner or an admin may export
+// secrets.
+func TestExportSecretsRequiresOwnerOrAdmin(t *testing.T) {
+	e := newTestEnv(t)
+	admin := e.client()
+	e.setupAdmin(admin)
+	createUser(t, admin, "manager", "manager-password-123", RoleMember)
+	manager := loginAs(t, e, "manager", "manager-password-123")
+
+	create := admin.do("POST", "/api/connections", map[string]any{
+		"name": "team-db", "env": "dev", "host": "localhost", "username": "dbuser",
+		"password": "SuperSecretPw!", "tlsMode": "disabled", "shared": true,
+	})
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", create.Code, create.Body.String())
+	}
+	var conn connView
+	_ = json.Unmarshal(create.Body.Bytes(), &conn)
+	if rec := admin.do("POST", "/api/connections/"+conn.ID+"/grants",
+		map[string]any{"userId": userID(t, e, admin, "manager"), "level": GrantManage}); rec.Code != http.StatusCreated {
+		t.Fatalf("grant manage: %d %s", rec.Code, rec.Body.String())
+	}
+
+	exportBody := func(withSecrets bool) map[string]any {
+		b := map[string]any{"ids": []string{conn.ID}, "includeSecrets": withSecrets}
+		if withSecrets {
+			b["passphrase"] = "a-strong-enough-passphrase"
+		}
+		return b
+	}
+
+	// The manage grantee may export the profile, but not its secrets.
+	if rec := manager.do("POST", "/api/connections/transfer/export", exportBody(true)); rec.Code != http.StatusForbidden {
+		t.Fatalf("manage grantee exported secrets: %d %s", rec.Code, rec.Body.String())
+	}
+	plain := manager.do("POST", "/api/connections/transfer/export", exportBody(false))
+	if plain.Code != http.StatusOK {
+		t.Fatalf("manage grantee could not export the profile: %d %s", plain.Code, plain.Body.String())
+	}
+	if bytes.Contains(plain.Body.Bytes(), []byte("SuperSecretPw!")) {
+		t.Fatal("password leaked in a secret-free export")
+	}
+
+	// The owner/admin still can export secrets.
+	if rec := admin.do("POST", "/api/connections/transfer/export", exportBody(true)); rec.Code != http.StatusOK {
+		t.Fatalf("admin could not export secrets: %d %s", rec.Code, rec.Body.String())
+	}
+}

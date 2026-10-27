@@ -14,6 +14,9 @@ services:
       DBYSON_ALLOWED_HOSTS: ${DBYSON_ALLOWED_HOSTS:?Set the database and SSH destinations this installation may reach}
       DBYSON_SETUP_TOKEN: ${DBYSON_SETUP_TOKEN:?Set a private token for initial administrator setup}
       DBYSON_CREDENTIALS_ENABLED: ${CREDENTIALS_ENABLED:-true}
+      # CIDRs/IPs of the reverse proxy, so X-Forwarded-For/Proto are believed only
+      # from it. Leave empty when DByson is exposed directly (no proxy).
+      DBYSON_TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       DBYSON_OIDC_ENABLED: ${GOOGLE_ENABLED:-false}
       DBYSON_OIDC_ISSUER: https://accounts.google.com
       DBYSON_OIDC_NAME: Google

@@ -39,6 +39,12 @@ type discoveryResult struct {
 var discoverySlots = make(chan struct{}, 2)
 
 func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
+	// Discovery reveals the server's own network interfaces and reachable
+	// services; viewers only open existing connections, so they do not need it.
+	if sessionFrom(r).Role == RoleViewer {
+		writeError(w, http.StatusForbidden, "El rol Solo lectura no puede explorar la red")
+		return
+	}
 	var in struct {
 		Host string `json:"host"`
 		Port int    `json:"port"`

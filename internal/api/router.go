@@ -4,6 +4,7 @@ package api
 import (
 	"io/fs"
 	"net/http"
+	"net/netip"
 	"path"
 	"strings"
 	"sync"
@@ -29,14 +30,19 @@ type Deps struct {
 	MFAPolicy             string // off | sensitive | all (see mfa.go); empty means sensitive
 	OIDC                  *sso.Provider
 	PasswordLoginDisabled bool
+	// TrustedProxies are CIDRs whose X-Forwarded-For / X-Forwarded-Proto headers
+	// are believed. Empty (the default) means the socket peer is the client, so a
+	// spoofed header can neither forge an audit IP nor share everyone's throttle.
+	TrustedProxies []netip.Prefix
 }
 
 type Server struct {
 	passkeyPending passkeyCeremonies
 	queries        queryRegistry
 	confirmations  sync.Map // short-lived, single-use challenges
-	oidcStates     oidcStates
 	mfaPending     mfaChallenges
+	oidcUsed       usedStates // SSO states already consumed (replay guard)
+	flavorCache    sync.Map   // connID -> bool: is the backend MariaDB (for the exec-time bound)
 	Deps
 	version  string
 	sessions *auth.Sessions

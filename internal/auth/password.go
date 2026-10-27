@@ -31,13 +31,28 @@ const (
 
 var ErrInvalidHash = errors.New("invalid password hash")
 
+// maxConcurrentHashes bounds how many Argon2id computations run at once. Each
+// allocates argonMemory, so without a bound a burst of login attempts could
+// allocate enough memory to get the process OOM-killed before the throttle
+// records the failures. Extra attempts wait here without allocating, trading a
+// crash that hits everyone for a little latency under flood.
+const maxConcurrentHashes = 4
+
+var hashSem = make(chan struct{}, maxConcurrentHashes)
+
+func argon2idKey(password string, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+	hashSem <- struct{}{}
+	defer func() { <-hashSem }()
+	return argon2.IDKey([]byte(password), salt, time, memory, threads, keyLen)
+}
+
 // HashPassword returns an encoded Argon2id hash: $argon2id$v=19$m=..,t=..,p=..$salt$hash
 func HashPassword(password string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	key := argon2idKey(password, salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, argonMemory, argonTime, argonThreads,
 		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
@@ -69,7 +84,7 @@ func VerifyPassword(password, encoded string) (bool, error) {
 	if err != nil || len(want) == 0 {
 		return false, ErrInvalidHash
 	}
-	got := argon2.IDKey([]byte(password), salt, t, m, p, uint32(len(want)))
+	got := argon2idKey(password, salt, t, m, p, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 

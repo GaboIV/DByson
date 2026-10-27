@@ -5,11 +5,50 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 )
 
 const MaxResultRows = 1000
 const MaxResultBytes = 8 << 20
+
+// MaxBrowseExecution caps how long the browse and count queries may run on the
+// database server. Those paths scan user-chosen filters over a whole table, so
+// a caller that has already given up (its HTTP context cancelled) must not leave
+// the query scanning on the server. See boundedRead.
+const MaxBrowseExecution = 30 * time.Second
+
+// execBoundMillis is the server-side execution bound for browse/count: the
+// request's remaining deadline, capped at MaxBrowseExecution and floored at 1 s
+// (an already-expired deadline yields a non-positive remainder, hence the floor).
+func execBoundMillis(ctx context.Context) int64 {
+	ms := MaxBrowseExecution.Milliseconds()
+	if dl, ok := ctx.Deadline(); ok {
+		if rem := time.Until(dl).Milliseconds(); rem < ms {
+			ms = rem
+		}
+	}
+	if ms < 1000 {
+		ms = 1000
+	}
+	return ms
+}
+
+// boundedRead wraps a plain SELECT so the database server aborts it at the
+// execution bound even if the client has disconnected. MySQL honors the
+// MAX_EXECUTION_TIME optimizer hint; MariaDB ignores that hint and instead
+// honors SET STATEMENT max_statement_time (seconds). Sending SET STATEMENT to
+// MySQL is a syntax error, so the hint — which both accept and only MySQL acts
+// on — is the default, and SET STATEMENT is used only for a confirmed MariaDB.
+func boundedRead(ctx context.Context, mariaDB bool, selectStmt string) string {
+	ms := execBoundMillis(ctx)
+	if mariaDB {
+		secs := strconv.FormatFloat(float64(ms)/1000, 'f', -1, 64)
+		return "SET STATEMENT max_statement_time=" + secs + " FOR " + selectStmt
+	}
+	return "SELECT /*+ MAX_EXECUTION_TIME(" + strconv.FormatInt(ms, 10) + ") */ " + strings.TrimPrefix(selectStmt, "SELECT ")
+}
 
 type rowQuerier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)

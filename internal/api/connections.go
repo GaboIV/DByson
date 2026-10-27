@@ -393,6 +393,18 @@ func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
+	// Editing a profile that is (or becomes) production, or that uses SSH, is as
+	// sensitive as using it: require the session's second factor. Without this,
+	// an owner or admin could relabel a prod profile to move it out of the MFA
+	// policy and then query it with no second factor.
+	gateEnv := in.Env
+	if rec.Env == "prod" {
+		gateEnv = rec.Env
+	}
+	if err := s.mfaGate(r, gateEnv, sec.SSH.Enabled || current.SSH.Enabled); err != nil {
+		s.fail(w, err)
+		return
+	}
 	wrapped, sealed, err := s.sealSecret(rec.ID, sec) // fresh data key on every write
 	if err != nil {
 		s.fail(w, err)
@@ -429,6 +441,8 @@ func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	// The host may now point at a different server; re-detect its flavor on next use.
+	s.flavorCache.Delete(rec.ID)
 	rec.Name, rec.Env, rec.Host, rec.Port, rec.Username, rec.Database = in.Name, in.Env, in.Host, in.Port, in.Username, in.Database
 	rec.TLSMode, rec.ReadOnly, rec.Shared, rec.UpdatedAt = in.TLSMode, in.ReadOnly, wantShared, now
 	v := view(rec, sec)
@@ -460,6 +474,7 @@ func (s *Server) deleteConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "connection not found")
 		return
 	}
+	s.flavorCache.Delete(rec.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -510,20 +525,35 @@ func (s *Server) testDraftConnection(w http.ResponseWriter, r *http.Request) {
 	// Testing a draft of a saved profile is part of editing it: it needs manage
 	// access, and the stored secrets only travel to their original destination.
 	base := secretBlob{}
+	// For a brand-new draft the MFA policy follows the body; for a saved profile
+	// it follows the stored destination, so the env in the request cannot move a
+	// prod profile out of the policy.
+	gateEnv := in.Env
+	gateSSH := false
 	if r.PathValue("id") != "" {
 		rec, stored, err := s.loadConnection(r.Context(), r, GrantManage)
 		if err != nil {
 			s.failAccess(w, r, err)
 			return
 		}
-		base = secretsFor(sessionFrom(r), rec, stored, in)
+		sess := sessionFrom(r)
+		// As on update, a non-owner cannot weaken a shared profile's protections
+		// (env, read-only, TLS) and then test it with the stored credentials.
+		if !ownerOrAdmin(sess, rec) {
+			if what := loweredProtection(rec, in); what != "" {
+				writeError(w, http.StatusForbidden, "only the owner or an admin can lower "+what+" of a shared connection")
+				return
+			}
+		}
+		base = secretsFor(sess, rec, stored, in)
+		gateEnv, gateSSH = rec.Env, stored.SSH.Enabled
 	}
 	sec, msg := in.applySecrets(base)
 	if msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
-	if err := s.mfaGate(r, in.Env, sec.SSH.Enabled); err != nil {
+	if err := s.mfaGate(r, gateEnv, sec.SSH.Enabled || gateSSH); err != nil {
 		s.fail(w, err)
 		return
 	}

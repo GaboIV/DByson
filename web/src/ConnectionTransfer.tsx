@@ -81,9 +81,7 @@ export function ConnectionTransfer({
             <input type="checkbox" checked={secrets} onChange={(e) => setSecrets(e.target.checked)} disabled={busy || !canExportSecrets} />
             Incluir contraseñas y certificados TLS en un paquete cifrado
           </label>
-          {!canExportSecrets && (
-            <p className="muted">Incluir credenciales requiere permiso para gestionar todas las conexiones seleccionadas.</p>
-          )}
+          {!canExportSecrets && <p className="muted">Solo el propietario o un administrador pueden exportar las credenciales guardadas.</p>}
           <p className="muted">
             {secrets
               ? "El receptor necesitará la frase de cifrado y su clave SSH. Comparte la frase por otro medio."

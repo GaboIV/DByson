@@ -246,7 +246,10 @@ func TestCSRFAndOriginProtection(t *testing.T) {
 }
 
 func TestConnectionLifecycleAndSecrecy(t *testing.T) {
-	e := newTestEnv(t)
+	// This test exercises the create/update/delete lifecycle and secret handling,
+	// not the MFA policy: run it with the policy off so editing a prod profile is
+	// not gated. The gate itself is covered by TestUpdateProdConnectionRequiresMFA.
+	e := newTestEnvWith(t, func(d *Deps) { d.MFAPolicy = MFAPolicyOff })
 	c := e.client()
 	e.setupAdmin(c)
 
@@ -300,6 +303,57 @@ func TestConnectionLifecycleAndSecrecy(t *testing.T) {
 	}
 	if rec := c.do("GET", "/api/connections/"+created.ID, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 after delete, got %d", rec.Code)
+	}
+}
+
+// Under the sensitive policy, editing or testing a production profile is as
+// sensitive as using it: a session with no second factor must be refused, and
+// the env in the request body cannot move a prod profile out of the policy.
+func TestUpdateProdConnectionRequiresMFA(t *testing.T) {
+	e := newTestEnvWith(t, func(d *Deps) { d.MFAPolicy = MFAPolicySensitive })
+	c := e.client()
+	e.setupAdmin(c)
+
+	create := c.do("POST", "/api/connections", map[string]any{
+		"name": "Prod DB", "env": "prod", "host": "db.example.com", "port": 3306,
+		"username": "app", "password": "SuperSecretPw!", "tlsMode": "verify_identity",
+	})
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create failed: %d %s", create.Code, create.Body.String())
+	}
+	var created connView
+	_ = json.Unmarshal(create.Body.Bytes(), &created)
+
+	// Editing the prod profile without a second factor is refused.
+	upd := c.do("PUT", "/api/connections/"+created.ID, map[string]any{
+		"name": "Prod DB 2", "env": "prod", "host": "db.example.com", "username": "app", "tlsMode": "verify_ca",
+	})
+	if upd.Code != http.StatusForbidden || !strings.Contains(upd.Body.String(), mfaRequiredCode) {
+		t.Fatalf("editing prod without MFA must be gated: %d %s", upd.Code, upd.Body.String())
+	}
+
+	// Relabelling the env to dev in the body cannot sidestep the gate: the policy
+	// follows the stored prod destination, both for the update and for test-draft.
+	relabel := c.do("PUT", "/api/connections/"+created.ID, map[string]any{
+		"name": "Prod DB", "env": "dev", "host": "db.example.com", "username": "app", "tlsMode": "verify_identity",
+	})
+	if relabel.Code != http.StatusForbidden || !strings.Contains(relabel.Body.String(), mfaRequiredCode) {
+		t.Fatalf("relabelling prod to dev must still be gated: %d %s", relabel.Code, relabel.Body.String())
+	}
+	draft := c.do("POST", "/api/connections/"+created.ID+"/test-draft", map[string]any{
+		"name": "Prod DB", "env": "dev", "host": "db.example.com", "username": "app", "tlsMode": "verify_identity",
+	})
+	if draft.Code != http.StatusForbidden || !strings.Contains(draft.Body.String(), mfaRequiredCode) {
+		t.Fatalf("test-draft of a prod profile with env=dev must be gated: %d %s", draft.Code, draft.Body.String())
+	}
+
+	// With a verified second factor the same edit succeeds.
+	enrollMFA(t, c)
+	ok := c.do("PUT", "/api/connections/"+created.ID, map[string]any{
+		"name": "Prod DB 2", "env": "prod", "host": "db.example.com", "username": "app", "tlsMode": "verify_ca",
+	})
+	if ok.Code != http.StatusOK {
+		t.Fatalf("verified session must be able to edit prod: %d %s", ok.Code, ok.Body.String())
 	}
 }
 

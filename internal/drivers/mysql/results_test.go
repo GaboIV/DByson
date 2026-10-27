@@ -10,6 +10,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fixtureConnector struct {
@@ -151,5 +152,55 @@ func TestReadOnlyInitializesEveryPhysicalConnection(t *testing.T) {
 	f.setupErr = errors.New("not supported")
 	if _, err := connector.Connect(context.Background()); err == nil {
 		t.Fatal("failed-open when server rejected read-only")
+	}
+}
+
+func TestExecBoundMillisBoundsToDeadline(t *testing.T) {
+	// No deadline: the ceiling.
+	if ms := execBoundMillis(context.Background()); ms != 30000 {
+		t.Fatalf("no-deadline bound = %d ms, want the 30000 ms ceiling", ms)
+	}
+	// A deadline shorter than the ceiling bounds to roughly the time left.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if ms := execBoundMillis(ctx); ms <= 1000 || ms > 5000 {
+		t.Fatalf("5 s deadline gave %d ms, want it bounded within (1000, 5000]", ms)
+	}
+	// An expired deadline is floored to 1 s, never zero or negative.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel2()
+	time.Sleep(time.Millisecond)
+	if ms := execBoundMillis(ctx2); ms != 1000 {
+		t.Fatalf("expired deadline gave %d ms, want the 1000 ms floor", ms)
+	}
+}
+
+// Each flavor gets a bound its server actually honors: MySQL the optimizer hint,
+// MariaDB the SET STATEMENT prefix (the hint is a no-op there). Sending MariaDB
+// syntax to MySQL is a syntax error, so flavor must drive the choice.
+func TestBoundedReadPerFlavor(t *testing.T) {
+	ctx := context.Background()
+	mysqlQ := boundedRead(ctx, false, "SELECT a FROM t WHERE id = ?")
+	if !strings.HasPrefix(mysqlQ, "SELECT /*+ MAX_EXECUTION_TIME(30000) */ a FROM t WHERE id = ?") {
+		t.Fatalf("mysql bound = %q", mysqlQ)
+	}
+	mariaQ := boundedRead(ctx, true, "SELECT a FROM t WHERE id = ?")
+	if !strings.HasPrefix(mariaQ, "SET STATEMENT max_statement_time=30 FOR SELECT a FROM t WHERE id = ?") {
+		t.Fatalf("maria bound = %q", mariaQ)
+	}
+	if strings.Contains(mariaQ, "MAX_EXECUTION_TIME") {
+		t.Fatalf("maria query must not carry the MySQL hint: %q", mariaQ)
+	}
+}
+
+// Browsing a table carries a server-side execution bound, so a query the caller
+// has abandoned cannot keep scanning on the database server.
+func TestBrowseCarriesExecutionBound(t *testing.T) {
+	db, f := fixtureDB(t, 3, "value")
+	if _, err := GetTableData(context.Background(), db, "db", "t", TableDataOptions{PageSize: 2, SortColumn: "id"}); err != nil {
+		t.Fatalf("browse: %v", err)
+	}
+	if len(f.queries) == 0 || !strings.Contains(f.queries[len(f.queries)-1], "MAX_EXECUTION_TIME") {
+		t.Fatalf("browse query carries no execution bound: %v", f.queries)
 	}
 }

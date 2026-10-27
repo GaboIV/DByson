@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -26,19 +27,18 @@ const (
 	// account with local 2FA; the browser lands on /?sso=mfa and posts the code.
 	mfaPendingCookie = "dbyson_mfa_pending"
 	oidcStateTTL     = 10 * time.Minute
+	// oidcStateID binds the sealed SSO state to its purpose (vault associated data).
+	oidcStateID = "oidc-state"
 )
 
-// oidcState is a pending SSO login: the nonce the ID token must echo back and the
-// PKCE verifier for the code exchange.
+// oidcState is a pending SSO login: the nonce the ID token must echo back and
+// the PKCE verifier for the code exchange. It travels sealed inside the opaque
+// state value (and its browser cookie), never in server memory, so an anonymous
+// caller cannot fill a shared table and lock everyone out of SSO.
 type oidcState struct {
-	nonce    string
-	verifier string
-	expires  time.Time
-}
-
-type oidcStates struct {
-	mu sync.Mutex
-	m  map[string]oidcState
+	Nonce    string `json:"n"`
+	Verifier string `json:"v"`
+	Expires  int64  `json:"e"`
 }
 
 func randomState() (string, error) {
@@ -49,50 +49,84 @@ func randomState() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// create registers a login attempt and returns its state, nonce and PKCE challenge.
-func (c *oidcStates) create() (state, nonce, challenge string, err error) {
-	if state, err = randomState(); err != nil {
-		return
+// usedStates remembers states that completed a valid provider exchange, so a
+// captured state cannot be replayed within its TTL. Only fully verified logins
+// add entries, so an anonymous caller cannot fill it (unlike a pending-state
+// table), which is why the pending state itself stays stateless.
+type usedStates struct {
+	mu sync.Mutex
+	m  map[string]time.Time
+}
+
+func (u *usedStates) useOnce(key string, ttl time.Duration) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	now := time.Now()
+	if u.m == nil {
+		u.m = map[string]time.Time{}
+	}
+	for k, exp := range u.m {
+		if now.After(exp) {
+			delete(u.m, k)
+		}
+	}
+	if _, seen := u.m[key]; seen {
+		return false
+	}
+	u.m[key] = now.Add(ttl)
+	return true
+}
+
+// newOIDCState seals a fresh pending login into an opaque, authenticated state
+// value and returns it with the nonce and PKCE challenge to send the provider.
+func (s *Server) newOIDCState() (state, nonce, challenge string, err error) {
+	if s.Vault == nil {
+		return "", "", "", errors.New("vault required for SSO state")
 	}
 	if nonce, err = randomState(); err != nil {
 		return
 	}
 	verifier, challenge, err := sso.NewPKCE()
 	if err != nil {
-		return
+		return "", "", "", err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.m == nil {
-		c.m = map[string]oidcState{}
+	payload, err := json.Marshal(oidcState{Nonce: nonce, Verifier: verifier, Expires: time.Now().Add(oidcStateTTL).Unix()})
+	if err != nil {
+		return "", "", "", err
 	}
-	now := time.Now()
-	for k, v := range c.m {
-		if now.After(v.expires) {
-			delete(c.m, k)
-		}
+	wrapped, ct, err := s.Vault.Seal(oidcStateID, payload)
+	if err != nil {
+		return "", "", "", err
 	}
-	if len(c.m) >= 256 {
-		return "", "", "", errTooManyOIDC
-	}
-	c.m[challengeKey(state)] = oidcState{nonce: nonce, verifier: verifier, expires: now.Add(oidcStateTTL)}
-	return state, nonce, challenge, nil
+	return base64.RawURLEncoding.EncodeToString(wrapped) + "." + base64.RawURLEncoding.EncodeToString(ct), nonce, challenge, nil
 }
 
-// take consumes a state: each one works once.
-func (c *oidcStates) take(state string) (oidcState, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	k := challengeKey(state)
-	v, ok := c.m[k]
-	delete(c.m, k)
-	if !ok || time.Now().After(v.expires) {
+// openOIDCState authenticates and decodes a state value, rejecting a tampered or
+// expired one. It keeps no server state, so the value could open more than once;
+// replay is stopped by the one-time state cookie and the provider's one-time code.
+func (s *Server) openOIDCState(state string) (oidcState, bool) {
+	if s.Vault == nil {
 		return oidcState{}, false
 	}
-	return v, true
+	a, b, found := strings.Cut(state, ".")
+	if !found {
+		return oidcState{}, false
+	}
+	wrapped, err1 := base64.RawURLEncoding.DecodeString(a)
+	ct, err2 := base64.RawURLEncoding.DecodeString(b)
+	if err1 != nil || err2 != nil {
+		return oidcState{}, false
+	}
+	payload, err := s.Vault.Open(oidcStateID, wrapped, ct)
+	if err != nil {
+		return oidcState{}, false
+	}
+	var st oidcState
+	if json.Unmarshal(payload, &st) != nil || time.Now().Unix() > st.Expires {
+		return oidcState{}, false
+	}
+	return st, true
 }
-
-var errTooManyOIDC = errors.New("too many pending sign-ins")
 
 func (s *Server) oidcProvider() *sso.Provider { return s.OIDC }
 
@@ -107,13 +141,13 @@ func (s *Server) handleOIDCStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": enabled, "provider": name, "google": google, "credentialsEnabled": !s.PasswordLoginDisabled})
 }
 
-func setShortCookie(w http.ResponseWriter, r *http.Request, name, value, path string, sameSite http.SameSite, ttl time.Duration) {
+func (s *Server) setShortCookie(w http.ResponseWriter, r *http.Request, name, value, path string, sameSite http.SameSite, ttl time.Duration) {
 	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: path, HttpOnly: true,
-		Secure: isHTTPS(r), SameSite: sameSite, MaxAge: int(ttl.Seconds())})
+		Secure: s.isHTTPS(r), SameSite: sameSite, MaxAge: int(ttl.Seconds())})
 }
 
-func clearShortCookie(w http.ResponseWriter, r *http.Request, name, path string) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: path, HttpOnly: true, Secure: isHTTPS(r), MaxAge: -1})
+func (s *Server) clearShortCookie(w http.ResponseWriter, r *http.Request, name, path string) {
+	http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: path, HttpOnly: true, Secure: s.isHTTPS(r), MaxAge: -1})
 }
 
 func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +160,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "SSO callback URL is not configured")
 		return
 	}
-	state, nonce, challenge, err := s.oidcStates.create()
+	state, nonce, challenge, err := s.newOIDCState()
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "try again later")
 		return
@@ -136,7 +170,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "identity provider is unreachable")
 		return
 	}
-	setShortCookie(w, r, oidcStateCookie, state, "/api/auth/oidc", http.SameSiteLaxMode, oidcStateTTL)
+	s.setShortCookie(w, r, oidcStateCookie, state, "/api/auth/oidc", http.SameSiteLaxMode, oidcStateTTL)
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
@@ -146,8 +180,8 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "SSO is not configured on this server")
 		return
 	}
-	clearShortCookie(w, r, oidcStateCookie, "/api/auth/oidc")
-	attempt := audit.Entry{IP: clientIP(r), Action: "auth.oidc.login"}
+	s.clearShortCookie(w, r, oidcStateCookie, "/api/auth/oidc")
+	attempt := audit.Entry{IP: s.clientIP(r), Action: "auth.oidc.login"}
 	fail := func(outcome, detail, reason string) {
 		attempt.Outcome, attempt.Detail = outcome, detail
 		s.record(r.Context(), attempt)
@@ -163,19 +197,25 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		fail(audit.OutcomeDenied, "state does not belong to this browser", "failed")
 		return
 	}
-	pending, ok := s.oidcStates.take(state)
+	pending, ok := s.openOIDCState(state)
 	if !ok {
 		fail(audit.OutcomeDenied, "invalid or expired state", "failed")
 		return
 	}
-	rawToken, err := p.Exchange(r.URL.Query().Get("code"), pending.verifier)
+	rawToken, err := p.Exchange(r.URL.Query().Get("code"), pending.Verifier)
 	if err != nil {
 		fail(audit.OutcomeDenied, "code exchange failed", "failed")
 		return
 	}
-	claims, err := p.Verify(rawToken, pending.nonce)
+	claims, err := p.Verify(rawToken, pending.Nonce)
 	if err != nil {
 		fail(audit.OutcomeDenied, "invalid ID token", "failed")
+		return
+	}
+	// Defense in depth beyond the provider's one-time code: a given state logs in
+	// at most once, so a captured state and cookie cannot be replayed.
+	if !s.oidcUsed.useOnce(challengeKey(state), oidcStateTTL) {
+		fail(audit.OutcomeDenied, "state already used", "failed")
 		return
 	}
 	cfg := p.Config()
@@ -210,7 +250,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 			}
 			attempt.Outcome, attempt.Detail = audit.OutcomeOK, "identity verified by SSO; second factor pending"
 			s.record(r.Context(), attempt)
-			setShortCookie(w, r, mfaPendingCookie, token, "/api/auth/mfa", http.SameSiteStrictMode, mfaChallengeTTL)
+			s.setShortCookie(w, r, mfaPendingCookie, token, "/api/auth/mfa", http.SameSiteStrictMode, mfaChallengeTTL)
 			http.Redirect(w, r, "/?sso=mfa", http.StatusFound)
 			return
 		}
@@ -221,12 +261,12 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	attempt.Outcome = audit.OutcomeOK
 	s.record(r.Context(), attempt)
 	token, _, err := s.sessions.CreateWithDetails(r.Context(), userID, mfa,
-		auth.SessionDetails{IP: clientIP(r), UserAgent: truncateRunes(r.UserAgent(), 512), ClientCert: clientCertificate(r)})
+		auth.SessionDetails{IP: s.clientIP(r), UserAgent: truncateRunes(r.UserAgent(), 512), ClientCert: clientCertificate(r)})
 	if err != nil {
 		fail(audit.OutcomeError, "could not create session", "failed")
 		return
 	}
-	setCookie(w, r, token)
+	s.setCookie(w, r, token)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -308,7 +348,7 @@ func (s *Server) provisionOIDCUser(r *http.Request, claims *sso.Claims) (int64, 
 		return 0, err
 	}
 	id, _ := res.LastInsertId()
-	s.record(r.Context(), audit.Entry{UserID: id, Username: username, IP: clientIP(r),
+	s.record(r.Context(), audit.Entry{UserID: id, Username: username, IP: s.clientIP(r),
 		Action: "user.create", Target: username, Detail: "sso auto-provision", Outcome: audit.OutcomeOK})
 	return id, nil
 }

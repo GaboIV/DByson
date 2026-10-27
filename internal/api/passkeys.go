@@ -103,7 +103,7 @@ func (s *Server) passkeyPassword(w http.ResponseWriter, r *http.Request, passwor
 	sess := sessionFrom(r)
 	var hash string
 	var enabled bool
-	key := "passkey-manage|" + clientIP(r) + "|" + strconv.FormatInt(sess.UserID, 10)
+	key := "passkey-manage|" + s.clientIP(r) + "|" + strconv.FormatInt(sess.UserID, 10)
 	if blocked, wait := s.throttle.Blocked(key); blocked {
 		tooManyAttempts(w, wait)
 		return false
@@ -147,7 +147,7 @@ func (s *Server) storeCeremony(w http.ResponseWriter, r *http.Request, c passkey
 	c.expires = time.Now().Add(5 * time.Minute)
 	c.cert = clientCertificate(r)
 	s.passkeyPending.items[token] = c
-	http.SetCookie(w, &http.Cookie{Name: passkeyCookie, Value: token, Path: "/api/auth/passkeys", MaxAge: 300, HttpOnly: true, Secure: isHTTPS(r), SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: passkeyCookie, Value: token, Path: "/api/auth/passkeys", MaxAge: 300, HttpOnly: true, Secure: s.isHTTPS(r), SameSite: http.SameSiteStrictMode})
 	return true
 }
 func (s *Server) takeCeremony(w http.ResponseWriter, r *http.Request, purpose string) (passkeyCeremony, bool) {
@@ -160,7 +160,7 @@ func (s *Server) takeCeremony(w http.ResponseWriter, r *http.Request, purpose st
 	c, ok := s.passkeyPending.items[cookie.Value]
 	delete(s.passkeyPending.items, cookie.Value)
 	s.passkeyPending.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: passkeyCookie, Value: "", Path: "/api/auth/passkeys", MaxAge: -1, HttpOnly: true, Secure: isHTTPS(r), SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: passkeyCookie, Value: "", Path: "/api/auth/passkeys", MaxAge: -1, HttpOnly: true, Secure: s.isHTTPS(r), SameSite: http.SameSiteStrictMode})
 	if !ok || c.purpose != purpose || time.Now().After(c.expires) || c.cert != clientCertificate(r) || (purpose == "register" && c.session != sessionFrom(r).ID) {
 		writeError(w, 400, "invalid or expired passkey challenge")
 		return c, false
@@ -295,7 +295,7 @@ func (s *Server) beginPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.passkeysAvailable(w) {
 		return
 	}
-	key := "passkey|" + clientIP(r)
+	key := "passkey|" + s.clientIP(r)
 	if blocked, wait := s.ipThrottle.Blocked(key); blocked {
 		tooManyAttempts(w, wait)
 		return
@@ -337,14 +337,14 @@ func (s *Server) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 	}, c.data, r)
 	if err != nil || credential == nil || credential.Authenticator.CloneWarning {
 		writeError(w, 401, "passkey authentication failed")
-		s.record(r.Context(), audit.Entry{Action: "auth.passkey.login", IP: clientIP(r), Outcome: audit.OutcomeDenied})
+		s.record(r.Context(), audit.Entry{Action: "auth.passkey.login", IP: s.clientIP(r), Outcome: audit.OutcomeDenied})
 		return
 	}
 	u := user.(*passkeyUser)
 	var disabled bool
 	if err := s.Store.DB.QueryRowContext(r.Context(), `SELECT disabled FROM users WHERE id = ?`, u.id).Scan(&disabled); err != nil || disabled {
 		writeError(w, 401, "passkey authentication failed")
-		s.record(r.Context(), audit.Entry{Action: "auth.passkey.login", IP: clientIP(r), Outcome: audit.OutcomeDenied})
+		s.record(r.Context(), audit.Entry{Action: "auth.passkey.login", IP: s.clientIP(r), Outcome: audit.OutcomeDenied})
 		return
 	}
 	raw, _ := json.Marshal(credential)
@@ -358,6 +358,6 @@ func (s *Server) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, "credential changed; retry authentication")
 		return
 	}
-	s.record(r.Context(), audit.Entry{Action: "auth.passkey.login", UserID: u.id, Username: u.name, IP: clientIP(r), Outcome: audit.OutcomeOK})
+	s.record(r.Context(), audit.Entry{Action: "auth.passkey.login", UserID: u.id, Username: u.name, IP: s.clientIP(r), Outcome: audit.OutcomeOK})
 	s.startSession(w, r, u.id, u.name, u.role, true)
 }

@@ -455,7 +455,7 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 	ch, ok := s.mfaPending.take(in.Token)
 	if !ok {
 		if fromCookie {
-			clearShortCookie(w, r, mfaPendingCookie, "/api/auth/mfa")
+			s.clearShortCookie(w, r, mfaPendingCookie, "/api/auth/mfa")
 		}
 		writeError(w, http.StatusUnauthorized, "La verificación expiró. Vuelve a iniciar sesión.")
 		return
@@ -465,7 +465,7 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		tooManyAttempts(w, wait)
 		return
 	}
-	e := audit.Entry{UserID: ch.userID, Username: ch.username, IP: clientIP(r), Action: "auth.login.mfa"}
+	e := audit.Entry{UserID: ch.userID, Username: ch.username, IP: s.clientIP(r), Action: "auth.login.mfa"}
 	valid, method, err := s.verifySecondFactor(r.Context(), ch.userID, in.Code, true)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -489,7 +489,7 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mfaPending.done(in.Token)
 	if fromCookie {
-		clearShortCookie(w, r, mfaPendingCookie, "/api/auth/mfa")
+		s.clearShortCookie(w, r, mfaPendingCookie, "/api/auth/mfa")
 	}
 	s.record(r.Context(), e)
 	s.startSession(w, r, ch.userID, ch.username, ch.role, true)

@@ -161,8 +161,40 @@ func ClassifySQL(sql string) SQLClassification {
 	}
 }
 
+// hasOptimizerHint reports whether sql carries a /*+ ... */ optimizer hint
+// outside any string or quoted identifier. The tokenizer treats such a hint as
+// an ordinary comment, so SET_VAR() inside one would otherwise slip past the
+// read-only checks and change session variables; read-only refuses them.
+func hasOptimizerHint(sql string) bool {
+	for i := 0; i < len(sql); {
+		switch c := sql[i]; {
+		case c == '\'' || c == '"' || c == '`':
+			i++
+			for i < len(sql) {
+				if sql[i] == c {
+					if i+1 < len(sql) && sql[i+1] == c {
+						i += 2
+						continue
+					}
+					i++
+					break
+				}
+				i++
+			}
+		case c == '/' && i+2 < len(sql) && sql[i+1] == '*' && sql[i+2] == '+':
+			return true
+		default:
+			i++
+		}
+	}
+	return false
+}
+
 // Read-only uses an allowlist, backed by READ ONLY on every physical connection.
 func IsReadOnlyViolation(sql string) bool {
+	if hasOptimizerHint(sql) {
+		return true
+	}
 	tokens, err := tokenizeSQL(sql)
 	if err != nil {
 		return true
@@ -181,22 +213,43 @@ func IsReadOnlyViolation(sql string) bool {
 	}
 	for i, t := range tokens {
 		if t.quoted {
-			if strings.HasPrefix(t.text, "`") && i+1 < len(tokens) && tokens[i+1].text == "(" {
-				name := strings.ToUpper(strings.ReplaceAll(strings.Trim(t.text, "`"), "``", "`"))
-				switch name {
-				case "GET_LOCK", "RELEASE_LOCK", "LOAD_FILE", "SLEEP", "BENCHMARK":
-					return true
-				}
+			// A quoted identifier used as a function call, e.g. `SLEEP`(9) or, under
+			// ANSI_QUOTES, "SLEEP"(9). String literals ('...') are not function names.
+			var name string
+			switch {
+			case strings.HasPrefix(t.text, "`"):
+				name = strings.ReplaceAll(strings.Trim(t.text, "`"), "``", "`")
+			case strings.HasPrefix(t.text, `"`):
+				name = strings.ReplaceAll(strings.Trim(t.text, `"`), `""`, `"`)
+			default:
+				continue
+			}
+			if i+1 < len(tokens) && tokens[i+1].text == "(" && deniedFunction(strings.ToUpper(name)) {
+				return true
 			}
 			continue
 		}
 		switch t.text {
-		case "INTO", "OUTFILE", "DUMPFILE", "FOR", "LOCK", "GET_LOCK", "RELEASE_LOCK", "LOAD_FILE", "SLEEP", "BENCHMARK", "SET":
+		case "INTO", "OUTFILE", "DUMPFILE", "FOR", "LOCK", "SET":
+			return true
+		}
+		if deniedFunction(t.text) {
 			return true
 		}
 		if t.text == ":" && i+1 < len(tokens) && tokens[i+1].text == "=" {
 			return true
 		}
+	}
+	return false
+}
+
+// deniedFunction names functions that wait, lock, read files or stall the server
+// and so never belong on a read-only connection, whatever quoting is in effect.
+func deniedFunction(name string) bool {
+	switch name {
+	case "GET_LOCK", "RELEASE_LOCK", "RELEASE_ALL_LOCKS", "LOAD_FILE", "SLEEP", "BENCHMARK",
+		"MASTER_POS_WAIT", "SOURCE_POS_WAIT", "WAIT_FOR_EXECUTED_GTID_SET", "WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS":
+		return true
 	}
 	return false
 }

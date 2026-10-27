@@ -28,7 +28,7 @@ func (s *Server) revokeSession(w http.ResponseWriter, r *http.Request) {
 	s.queries.revokeSessions(sess.UserID, func(sessionID string) bool { return sessionID == id })
 	auditFrom(r).entry.Target = id
 	if id == sess.ID {
-		clearCookie(w, r)
+		s.clearCookie(w, r)
 	}
 	writeJSON(w, 200, map[string]bool{"current": id == sess.ID})
 }

@@ -333,6 +333,9 @@ type TableDataOptions struct {
 	Filters     []FilterCondition `json:"filters,omitempty"`
 	CustomWhere string            `json:"customWhere"`
 	Columns     string            `json:"columns"` // comma separated or empty for "*"
+	// MariaDB is set by the server (not the client): it picks the execution-bound
+	// syntax the backend honors. See boundedRead.
+	MariaDB bool `json:"-"`
 }
 
 // GetTableData loads rows with case-insensitive and accent-insensitive search.
@@ -382,7 +385,7 @@ func GetTableData(ctx context.Context, db *sql.DB, database, table string, opts 
 	if offset < 0 || offset > 1<<53-1001 {
 		return nil, errors.New("invalid pagination offset")
 	}
-	dataQuery := fmt.Sprintf("SELECT %s ", selectCols) + baseQuery + wherePart + orderPart + fmt.Sprintf(" LIMIT %d OFFSET %d", opts.PageSize+1, offset)
+	dataQuery := boundedRead(ctx, opts.MariaDB, "SELECT "+selectCols+" "+baseQuery+wherePart+orderPart+fmt.Sprintf(" LIMIT %d OFFSET %d", opts.PageSize+1, offset))
 	start := time.Now()
 	res, err := selectLimited(ctx, db, dataQuery, opts.PageSize+1, MaxResultBytes, args...)
 	if err != nil {
@@ -480,7 +483,7 @@ func CountTableRows(ctx context.Context, db *sql.DB, database, table string, opt
 	if err != nil {
 		return 0, "", err
 	}
-	query := "SELECT COUNT(*) FROM " + EscapeIdent(database) + "." + EscapeIdent(table) + where
+	query := boundedRead(ctx, opts.MariaDB, "SELECT COUNT(*) FROM "+EscapeIdent(database)+"."+EscapeIdent(table)+where)
 	var total int64
 	err = db.QueryRowContext(ctx, query, args...).Scan(&total)
 	return total, query, err
@@ -553,9 +556,6 @@ func buildFilterExpr(column string, op string, val string) (string, any) {
 		return fmt.Sprintf("%s IS NULL", EscapeIdent(column)), nil
 	case "IS_NOT_NULL":
 		return fmt.Sprintf("%s IS NOT NULL", EscapeIdent(column)), nil
-	case "SQL":
-		// Direct expression
-		return val, nil
 	default: // LIKE / contains / LIKE %%
 		return fmt.Sprintf("%s LIKE CONVERT(? USING utf8mb4) COLLATE utf8mb4_general_ci", colExpr), "%" + val + "%"
 	}
@@ -739,24 +739,51 @@ func DeleteRow(ctx context.Context, db *sql.DB, database, table string, pk map[s
 	return q, err
 }
 
+// requireExactPK fails unless keys names exactly the primary-key columns, each
+// with a non-nil value, so a key map can never match more than one row.
+func requireExactPK(primaryKey []string, keys map[string]any) error {
+	if len(keys) != len(primaryKey) {
+		return errors.New("key must name exactly the primary-key columns")
+	}
+	for _, col := range primaryKey {
+		if v, ok := keys[col]; !ok || v == nil {
+			return errors.New("key must name exactly the primary-key columns")
+		}
+	}
+	return nil
+}
+
 // BatchDeleteRows deletes multiple records by primary key in a single transaction.
 func BatchDeleteRows(ctx context.Context, db *sql.DB, database, table string, pks []map[string]any) (int64, string, error) {
 	if len(pks) == 0 {
 		return 0, "", nil
 	}
 
+	// Each key map must name exactly the table's primary key, so every clause
+	// matches at most one row. Without this a caller could pass a non-key column
+	// (e.g. a tenant id) and delete every matching row while the confirmation
+	// preview still reads "N rows".
+	schema, err := GetTableSchema(ctx, db, database, table)
+	if err != nil {
+		return 0, "", err
+	}
+	if len(schema.PrimaryKey) == 0 {
+		return 0, "", errors.New("table has no primary key; batch delete is not allowed")
+	}
+
 	var orClauses []string
 	var args []any
 
 	for _, pk := range pks {
+		if err := requireExactPK(schema.PrimaryKey, pk); err != nil {
+			return 0, "", err
+		}
 		var andParts []string
-		for col, val := range pk {
+		for _, col := range schema.PrimaryKey {
 			andParts = append(andParts, fmt.Sprintf("%s = ?", EscapeIdent(col)))
-			args = append(args, val)
+			args = append(args, pk[col])
 		}
-		if len(andParts) > 0 {
-			orClauses = append(orClauses, "("+strings.Join(andParts, " AND ")+")")
-		}
+		orClauses = append(orClauses, "("+strings.Join(andParts, " AND ")+")")
 	}
 
 	if len(orClauses) == 0 {

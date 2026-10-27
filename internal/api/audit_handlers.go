@@ -147,7 +147,7 @@ func (s *Server) record(ctx context.Context, e audit.Entry) {
 // requireAuth would otherwise add when the handler returns.
 func (s *Server) recordFor(r *http.Request, action, target, detail, outcome string) {
 	auditFrom(r).skip = true
-	e := audit.Entry{IP: clientIP(r), Action: action, Target: target, Detail: detail, Outcome: outcome}
+	e := audit.Entry{IP: s.clientIP(r), Action: action, Target: target, Detail: detail, Outcome: outcome}
 	if sess := sessionFrom(r); sess != nil {
 		e.UserID, e.Username = sess.UserID, sess.Username
 	}
@@ -218,7 +218,7 @@ func (s *Server) exportAudit(w http.ResponseWriter, r *http.Request) {
 		outcome, detail = audit.OutcomeError, "format="+format+" rows="+strconv.Itoa(n)
 	}
 	s.record(r.Context(), audit.Entry{UserID: sess.UserID, Username: sess.Username,
-		IP: clientIP(r), Action: "audit.export", Detail: detail + " rows=" + strconv.Itoa(n), Outcome: outcome})
+		IP: s.clientIP(r), Action: "audit.export", Detail: detail + " rows=" + strconv.Itoa(n), Outcome: outcome})
 }
 
 // purgeAudit deletes entries older than the given retention window. Only

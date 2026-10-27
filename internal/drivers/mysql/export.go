@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -49,6 +50,12 @@ func streamTable(ctx context.Context, db rowQuerier, database, table string, con
 
 func ExportCSV(ctx context.Context, db *sql.DB, database, table string, w io.Writer) error {
 	cw := csv.NewWriter(w)
+	writeRow := func(fields []string) error {
+		for i, f := range fields {
+			fields[i] = csvSafeField(f)
+		}
+		return cw.Write(fields)
+	}
 	err := streamTable(ctx, db, database, table, func(_ []string, values []any) error {
 		values = displayRow(values)
 		record := make([]string, len(values))
@@ -59,13 +66,30 @@ func ExportCSV(ctx context.Context, db *sql.DB, database, table string, w io.Wri
 				record[i] = fmt.Sprint(v)
 			}
 		}
-		return cw.Write(record)
-	}, cw.Write)
+		return writeRow(record)
+	}, writeRow)
 	if err != nil {
 		return err
 	}
 	cw.Flush()
 	return cw.Error()
+}
+
+// csvSafeField neutralizes spreadsheet formula injection: a cell a spreadsheet
+// would evaluate (it starts with = + - @, tab or carriage return) is prefixed
+// with a single quote, unless it is a plain number, which is left untouched.
+func csvSafeField(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		if _, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+			return s
+		}
+		return "'" + s
+	}
+	return s
 }
 
 func ExportJSON(ctx context.Context, db *sql.DB, database, table string, w io.Writer) error {

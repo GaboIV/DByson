@@ -47,6 +47,29 @@ func (s *Server) openDB(ctx context.Context, r *http.Request, targetDB string) (
 	return db, rec, nil
 }
 
+// serverIsMariaDB reports whether the connection's backend is MariaDB, so browse
+// and count can pick an execution-bound syntax it honors (MariaDB ignores the
+// MySQL optimizer hint). It caches the answer per connection and defaults to
+// false — the MySQL hint, which is harmless on both — on any uncertainty, since
+// MariaDB's SET STATEMENT syntax is an error on MySQL. The cache is dropped when
+// the connection is edited or deleted.
+func (s *Server) serverIsMariaDB(ctx context.Context, db *sql.DB, connID string) bool {
+	if connID != "" {
+		if v, ok := s.flavorCache.Load(connID); ok {
+			return v.(bool)
+		}
+	}
+	var version string
+	if err := db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
+		return false
+	}
+	isMaria := strings.Contains(strings.ToLower(version), "mariadb")
+	if connID != "" {
+		s.flavorCache.Store(connID, isMaria)
+	}
+	return isMaria
+}
+
 type listDatabasesResponse struct {
 	Databases       []string             `json:"databases"`
 	DatabaseDetails []mysql.DatabaseInfo `json:"databaseDetails"`
@@ -261,6 +284,7 @@ func (s *Server) handleTableData(w http.ResponseWriter, r *http.Request) {
 	}
 	defer db.Close()
 
+	opts.MariaDB = s.serverIsMariaDB(ctx, db, r.PathValue("id"))
 	data, err := mysql.GetTableData(ctx, db, dbName, tableName, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -314,6 +338,7 @@ func (s *Server) handleTableCount(w http.ResponseWriter, r *http.Request) {
 		FilterValue: r.URL.Query().Get("filterVal"),
 		Filters:     parseFilterConditions(r),
 		CustomWhere: r.URL.Query().Get("customWhere"),
+		MariaDB:     s.serverIsMariaDB(ctx, db, r.PathValue("id")),
 	}
 	start := time.Now()
 	total, query, err := mysql.CountTableRows(ctx, db, database, table, opts)
@@ -582,6 +607,10 @@ func (s *Server) handleOptimizeTable(w http.ResponseWriter, r *http.Request) {
 
 	dbName := r.PathValue("db")
 	tableName := r.PathValue("table")
+	var confirmation confirmationInput
+	if !readJSON(w, r, &confirmation) {
+		return
+	}
 
 	db, rec, err := s.openDB(ctx, r, dbName)
 	if err != nil {
@@ -595,6 +624,9 @@ func (s *Server) handleOptimizeTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.requireConfirmation(w, r, "OPTIMIZE TABLE", dbName+"."+tableName, "Reconstruye la tabla completa; en InnoDB puede bloquear y tardar mucho en tablas grandes.", "OPTIMIZE TABLE "+mysql.EscapeIdent(dbName)+"."+mysql.EscapeIdent(tableName), confirmation) {
+		return
+	}
 	sqlText, err := mysql.OptimizeTable(ctx, db, dbName, tableName)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

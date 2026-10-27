@@ -82,13 +82,16 @@ func (s *Server) exportProfiles(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, err)
 			return
 		}
-		// Exporting the profile needs use access; exporting its plaintext
-		// secrets needs manage access, like editing the profile.
-		need := GrantUse
-		if in.IncludeSecrets {
-			need = GrantManage
+		// Exporting the profile needs use access. Exporting its plaintext secrets
+		// is credential disclosure: only the owner or an admin may do it. A manage
+		// grant allows editing the profile in place, not carrying the stored
+		// password, keys or SSH material off to a file the grantee can decrypt.
+		ownerOrAdmin := sess.Role == RoleAdmin || rec.OwnerID == sess.UserID
+		if in.IncludeSecrets && !ownerOrAdmin {
+			writeError(w, http.StatusForbidden, "Solo el propietario o un administrador pueden exportar las credenciales guardadas")
+			return
 		}
-		allowed := sess.Role == RoleAdmin || rec.OwnerID == sess.UserID
+		allowed := ownerOrAdmin
 		if !allowed {
 			if rec.Shared == 0 {
 				s.fail(w, sql.ErrNoRows)
@@ -99,7 +102,7 @@ func (s *Server) exportProfiles(w http.ResponseWriter, r *http.Request) {
 				s.fail(w, gerr)
 				return
 			}
-			allowed = level == need || (need == GrantUse && level == GrantManage)
+			allowed = level == GrantUse || level == GrantManage
 		}
 		if !allowed {
 			s.fail(w, sql.ErrNoRows)
