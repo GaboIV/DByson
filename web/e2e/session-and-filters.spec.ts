@@ -264,8 +264,7 @@ test("Vista y controles: padding del overview, logo alineado, números anchos y 
     const tbody = document.querySelector(".data-view .data-table tbody")!;
     tbody.append(tbody.querySelector("tr")!.cloneNode(true));
     const rows = [...tbody.querySelectorAll("tr")];
-    const background = (row: HTMLTableRowElement, index: number) =>
-      getComputedStyle(row.querySelectorAll("td")[index]).backgroundColor;
+    const background = (row: HTMLTableRowElement, index: number) => getComputedStyle(row.querySelectorAll("td")[index]).backgroundColor;
     return {
       oddAction: background(rows[0], 1),
       evenAction: background(rows[1], 1),
@@ -281,17 +280,16 @@ test("Vista y controles: padding del overview, logo alineado, números anchos y 
   await expect(overview).toBeVisible();
   expect(await overview.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("4px");
 
-  const parity = await page.evaluate(() => {
-    const style = (selector: string) => getComputedStyle(document.querySelector(selector)!);
-    return {
-      homeFont: style("#panel-home .brand").fontSize,
-      wsFont: style(".workbench-panel:not([hidden]) .ws-topbar .brand").fontSize,
-      homePad: style("#panel-home .topbar").paddingLeft,
-      wsPad: style(".workbench-panel:not([hidden]) .ws-topbar").paddingLeft,
-    };
-  });
-  expect(parity.wsFont).toBe(parity.homeFont);
-  expect(parity.wsPad).toBe(parity.homePad);
+  // The workspace has no bar of its own: its sidebar head puts the logo exactly where Conexiones has it.
+  const logo = (panel: string) =>
+    page.evaluate((selector) => {
+      const box = document.querySelector(selector)!.getBoundingClientRect();
+      return { x: box.x, y: box.y, font: getComputedStyle(document.querySelector(selector)!.closest(".brand")!).fontSize };
+    }, `${panel} .brand-logo`);
+  const workspaceLogo = await logo(".workbench-panel:not([hidden]) .ws-brand-row");
+  await page.getByRole("tab", { name: "Conexiones", exact: true }).click();
+  expect(workspaceLogo).toEqual(await logo("#panel-home .topbar"));
+  await expect(page.locator(".ws-topbar")).toHaveCount(0);
 });
 
 test("Sesión vencida: salir del espacio, mostrar aviso y volver a autenticar sin bucle", async ({ page }, info) => {

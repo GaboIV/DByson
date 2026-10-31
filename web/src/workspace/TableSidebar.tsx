@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { TableInfo } from "../api";
 import { Spinner } from "../Spinner";
 import type { Resource } from "./catalog";
@@ -12,13 +13,16 @@ interface Props {
   onOpenTable: (table: string) => void;
   onCreateTable: () => void;
   onTools: () => void;
+  /** Brand, way back to Conexiones and database picker, above the sidebar's own actions. */
+  header?: ReactNode;
 }
 
-export function TableSidebar({ ctx, tables, filter, onFilter, activeView, onOpenTable, onCreateTable, onTools }: Props) {
+export function TableSidebar({ ctx, tables, filter, onFilter, activeView, onOpenTable, onCreateTable, onTools, header }: Props) {
   const visible = (tables.data ?? []).filter((t) => cleanStr(t.name).includes(cleanStr(filter)));
 
   return (
     <aside className="ws-sidebar">
+      {header}
       <div className="sidebar-actions">
         <button
           className={`action-btn ${activeView === "sql" ? "active" : ""}`}

@@ -549,7 +549,7 @@ td:hover .cell-copy,
 }
 
 .topbar .brand,
-.unified-app-bar .brand {
+.ws-brand-row .brand {
   display: inline-flex;
   align-items: center;
   height: 30px;
@@ -675,33 +675,12 @@ td:hover .cell-copy,
   overflow: hidden;
 }
 
-/* Navigation & Breadcrumb */
-.ws-topbar {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0.4rem 1rem;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  box-sizing: border-box;
-  min-height: var(--app-bar-height);
-  flex-wrap: wrap;
-  flex-shrink: 0;
-}
-
 /* Misma geometría que la marca en Conexiones para que el logo no salte de sitio. */
-.unified-app-bar .brand {
+.ws-brand-row .brand {
   font-size: 1.1rem;
   color: var(--accent);
   font-weight: 700;
   cursor: pointer;
-}
-
-.user-section {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.825rem;
 }
 
 .btn-back {
@@ -709,49 +688,64 @@ td:hover .cell-copy,
   font-size: 0.775rem;
 }
 
-.breadcrumb {
+/* Sidebar head of a workspace: the same 46px row as the Conexiones bar, so the logo
+   stays put, then the database picker. */
+.ws-brand-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.85rem;
-  min-width: 0;
-  flex-wrap: wrap;
-  overflow-wrap: anywhere;
+  justify-content: space-between;
+  gap: 0.5rem;
+  box-sizing: border-box;
+  height: var(--app-bar-height);
+  margin: -0.5rem -0.5rem 0;
+  padding: 0 0.5rem 0 1rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
-.bc-item {
-  cursor: pointer;
-  color: var(--muted);
-}
-
-.bc-item:hover {
-  color: var(--text);
-}
-
-.bc-active {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.bc-sep {
-  color: var(--muted);
-  opacity: 0.6;
+.ws-brand-row .btn-back {
+  white-space: nowrap;
 }
 
 .db-selector {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
+  margin: 0.5rem 0 0.1rem;
   font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.db-selector label {
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .db-selector select,
 .db-selector .themed-select {
-  width: auto;
+  flex: 1;
+  width: 100%;
   min-width: 0;
-  max-width: 15rem;
   padding: 0.2rem 0.45rem;
   font-size: 0.8rem;
+}
+
+.ws-connection-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.tab-strip-user {
+  align-self: center;
+  max-width: 10rem;
+  padding: 0 0.35rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: var(--muted);
 }
 
 /* SQL Banner (Adminer Style) - Inside Content Area Only */
@@ -977,8 +971,10 @@ td:hover .cell-copy,
   overflow: auto;
 }
 
-/* La vista de base de datos respira bajo la barra superior, como la banda de filtros. */
-.db-overview {
+/* La vista de base de datos y la lista de bases respiran igual bajo la barra superior,
+   como la banda de filtros, para que sus botones no salten al entrar en una base. */
+.db-overview,
+.server-dbs-view {
   padding-top: 0.25rem;
 }
 
@@ -4402,7 +4398,7 @@ td:hover .cell-copy,
   border-color: #9b74ee;
 }
 
-:root[data-theme="payaso"] .ws-topbar {
+:root[data-theme="payaso"] .ws-brand-row {
   background: #17314b;
   border-color: #59b9f8;
 }
@@ -5413,13 +5409,6 @@ button .spinner-inline {
 
 .link-button.link-danger {
   color: var(--danger);
-}
-
-button.bc-item {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
 }
 
 .data-table .col-check {

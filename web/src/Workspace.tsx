@@ -29,8 +29,6 @@ type ActiveTab = "server-dbs" | "db-overview" | Exclude<WorkspaceView, "browse">
 
 interface WorkspaceProps {
   connection: Connection;
-  username: string;
-  onLogout: () => void;
   onBack: () => void;
   initialDatabase?: string;
   initialTable?: string;
@@ -49,19 +47,7 @@ interface WorkspaceProps {
 }
 
 export function Workspace(props: WorkspaceProps) {
-  const {
-    connection,
-    username,
-    onLogout,
-    onBack,
-    isActive = true,
-    viewNavigation,
-    onOpenView,
-    onOpenTable,
-    onNewSQL,
-    onCloseTab,
-    onContextChange,
-  } = props;
+  const { connection, onBack, isActive = true, viewNavigation, onOpenView, onOpenTable, onNewSQL, onCloseTab, onContextChange } = props;
   const { preferences } = usePreferences();
   const readOnly = connection.readOnly || preferences.viewOnly;
   const { confirmedApi, confirmationDialog } = useConfirmedApi(`${connection.name} · ${connection.env.toUpperCase()}`);
@@ -213,79 +199,51 @@ export function Workspace(props: WorkspaceProps) {
     </div>
   );
 
-  return (
-    <div className="workspace">
-      <header className="ws-topbar unified-app-bar">
+  // The connection is already named on its tab, so the workspace has no bar of its own:
+  // the brand, the way back and the database picker head the sidebar.
+  const sidebarHeader = (
+    <>
+      <div className="ws-brand-row">
         <button className="brand brand-home" onClick={onBack} title="Ir a Conexiones">
           <Brand />
         </button>
         <button className="btn-back" onClick={onBack} title="Volver al listado de conexiones">
           ← Conexiones
         </button>
-
-        <nav className="breadcrumb" aria-label="Ubicación">
-          <span className={`badge env-${connection.env}`}>{connection.env}</span>
-          <button
-            className={`bc-item ${!database ? "bc-active" : ""}`}
-            onClick={() => openDatabase("")}
-            title="Ver las bases de datos del servidor"
-          >
-            <strong>{connection.name}</strong>
-          </button>
-          {database && (
-            <>
-              <span className="bc-sep">»</span>
-              <button
-                className={`bc-item ${!table ? "bc-active" : ""}`}
-                onClick={() => (viewNavigation && onOpenView ? onOpenView(database, "", "browse") : openDatabase(database))}
-                title="Ver las tablas de la base de datos"
-              >
-                {database}
-              </button>
-            </>
+      </div>
+      <div className="db-selector">
+        <label htmlFor={dbSelectId}>BD</label>
+        <Select
+          id={dbSelectId}
+          value={database}
+          onChange={openDatabase}
+          label="BD:"
+          options={[
+            { value: "", label: databases.loading ? "Cargando…" : "(Seleccionar BD)" },
+            ...(database && !databases.data?.some((d) => d.name === database) ? [{ value: database, label: database }] : []),
+            ...(databases.data ?? []).map((d) => ({ value: d.name, label: d.name })),
+          ]}
+        />
+      </div>
+      {(readOnly || connection.ssh?.enabled) && (
+        <div className="ws-connection-flags">
+          {readOnly && <span className="badge badge-ro">🔒 Solo lectura</span>}
+          {connection.ssh?.enabled && (
+            <span className="connection-route-badge" title={`SSH · ${connection.ssh.host}`}>
+              ↗ SSH
+            </span>
           )}
-          {table && (
-            <>
-              <span className="bc-sep">»</span>
-              <span className="bc-item bc-active">
-                <strong>{table}</strong>
-              </span>
-            </>
-          )}
-        </nav>
-
-        {connection.ssh?.enabled && (
-          <span className="connection-route-badge" title={`SSH · ${connection.ssh.host}`}>
-            ↗ SSH
-          </span>
-        )}
-        {readOnly && <span className="badge badge-ro">🔒 Solo lectura</span>}
-
-        <div className="db-selector">
-          <label htmlFor={dbSelectId}>BD:</label>
-          <Select
-            id={dbSelectId}
-            value={database}
-            onChange={openDatabase}
-            label="BD:"
-            options={[
-              { value: "", label: databases.loading ? "Cargando…" : "(Seleccionar BD)" },
-              ...(database && !databases.data?.some((d) => d.name === database) ? [{ value: database, label: database }] : []),
-              ...(databases.data ?? []).map((d) => ({ value: d.name, label: d.name })),
-            ]}
-          />
         </div>
+      )}
+    </>
+  );
 
-        <div className="spacer" />
-        <div className="user-section">
-          <span className="muted">{username}</span>
-          <button onClick={onLogout}>Salir</button>
-        </div>
-      </header>
-
+  return (
+    <div className="workspace">
       <div className="ws-body">
         <TableSidebar
           ctx={ctx}
+          header={sidebarHeader}
           tables={tables}
           filter={tableFilter}
           onFilter={setTableFilter}

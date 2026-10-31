@@ -372,6 +372,10 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
             >
               ⌕ <span className="shortcut-hint">Ctrl K</span>
             </button>
+            <span className="tab-strip-user" title="Sesión iniciada">
+              {session.username}
+            </span>
+            <button onClick={onLogout}>Salir</button>
           </>
         }
       />
@@ -388,7 +392,6 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
             <Brand />
           </strong>
           <span className="spacer" />
-          <span className="muted">{session.username}</span>
           <button onClick={() => setAudit(true)}>Auditoría</button>
           {session.role === "admin" && <button onClick={() => setTeam(true)}>Equipo</button>}
           <button onClick={() => setSecurity(true)}>
@@ -399,7 +402,6 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
               </span>
             )}
           </button>
-          <button onClick={onLogout}>Salir</button>
         </header>
         {showMfaHint && (
           <div className="mfa-banner" role="status">
@@ -441,8 +443,6 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
               {c ? (
                 <Workspace
                   connection={c}
-                  username={session.username}
-                  onLogout={onLogout}
                   onBack={() => activate("home")}
                   initialDatabase={pane.database}
                   initialTable={pane.table}
