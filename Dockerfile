@@ -10,8 +10,6 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
-# The frontend imports the shared project logo from the repository root.
-COPY logo-dbyson.png /logo-dbyson.png
 RUN npm run build
 
 # ---- Backend ----

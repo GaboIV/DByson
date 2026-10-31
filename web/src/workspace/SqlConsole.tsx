@@ -17,6 +17,11 @@ import { useConfirm } from "../Confirm";
 
 const DEFAULT_SQL = "SELECT 1;";
 
+/** Statements that only change session state (database, transaction, variables): nothing to refresh. */
+const SESSION_STATEMENT = /^\s*(USE|BEGIN|START\s+TRANSACTION|COMMIT|ROLLBACK|SAVEPOINT|RELEASE\s+SAVEPOINT|SET)\b/i;
+const OPENS_TRANSACTION = /^\s*(BEGIN(\s+WORK)?\s*;?\s*$|START\s+TRANSACTION\b)/i;
+const CLOSES_TRANSACTION = /^\s*(COMMIT|ROLLBACK(?!\s+(WORK\s+)?TO\b))\b/i;
+
 interface Props {
   ctx: ViewContext;
   initialSQL?: string;
@@ -163,6 +168,10 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
 
     const stmts = splitSqlStatements(targetText);
     if (stmts.length === 0) return;
+    // Several statements share one server connection, as in a mysql client: USE, SET and
+    // START TRANSACTION … COMMIT carry over to the statements that follow.
+    const scriptId = stmts.length > 1 ? crypto.randomUUID() : undefined;
+    let openTransaction = false;
     const batch = { controller: new AbortController(), requestId: "", stop: false };
     active.current = batch;
 
@@ -195,6 +204,7 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
             query: stmt,
             database: ctx.database,
             requestId: batch.requestId,
+            scriptId,
           },
           { signal: batch.controller.signal },
         );
@@ -220,9 +230,11 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
         } else {
           if (/^\s*EXPLAIN\s+(?!FORMAT|ANALYZE)/i.test(stmt) && r.result) setPlan(r.result);
           setExecutions((prev) => prev.map((item, idx) => (idx === i ? { ...item, status: "success", result: r.result ?? null } : item)));
+          if (OPENS_TRANSACTION.test(stmt)) openTransaction = true;
+          else if (CLOSES_TRANSACTION.test(stmt)) openTransaction = false;
           if (r.result) {
             ctx.reportSql(r.result.executedSql || stmt, r.result.executionMs);
-            if (!r.result.isSelect) invalidateConnection(ctx.connection.id);
+            if (!r.result.isSelect && !SESSION_STATEMENT.test(stmt)) invalidateConnection(ctx.connection.id);
           }
         }
       } catch (e) {
@@ -248,6 +260,18 @@ export function SqlConsole({ ctx, initialSQL, title, onRename, onDirtyChange }: 
         item.status === "pending" ? { ...item, status: "cancelled", error: "Sentencia omitida: se detuvo el script." } : item,
       ),
     );
+    if (scriptId) {
+      // Closing the script's connection rolls back a transaction it left open.
+      api("DELETE", `/api/connections/${ctx.connection.id}/scripts/${scriptId}`).catch(() => {});
+      if (openTransaction) {
+        setError(
+          batch.stop
+            ? "El script se detuvo con una transacción abierta: sus cambios se revirtieron (ROLLBACK)."
+            : "El script terminó sin COMMIT: la transacción abierta se revirtió (ROLLBACK). Añade COMMIT para guardar los cambios.",
+        );
+        invalidateConnection(ctx.connection.id);
+      }
+    }
     active.current = null;
     setCancelling(false);
     setHistory((h) => [targetText, ...h.filter((q) => q !== targetText)].slice(0, 20));

@@ -1,4 +1,11 @@
-import { useEffect, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { EditorView, basicSetup } from "codemirror";
 import { sql, MySQL } from "@codemirror/lang-sql";
 import { autocompletion } from "@codemirror/autocomplete";
@@ -33,7 +40,7 @@ const dbysonHighlightStyle = HighlightStyle.define([
 
 const dbysonEditorTheme = EditorView.theme({
   "&": {
-    height: "155px",
+    height: "100%",
     fontSize: "0.875rem",
     fontFamily: 'ui-monospace, "Cascadia Code", Menlo, monospace',
     backgroundColor: "var(--surface)",
@@ -118,8 +125,71 @@ const dbysonEditorTheme = EditorView.theme({
   },
 });
 
+const HEIGHT_KEY = "dbyson.sql-editor-height";
+const DEFAULT_HEIGHT = 155;
+const MIN_HEIGHT = 80;
+const maxHeight = () => Math.max(MIN_HEIGHT, Math.round(window.innerHeight * 0.75));
+const clampHeight = (h: number) => Math.min(maxHeight(), Math.max(MIN_HEIGHT, Math.round(h)));
+
+function storedHeight() {
+  try {
+    const n = Number(localStorage.getItem(HEIGHT_KEY));
+    return Number.isFinite(n) && n > 0 ? clampHeight(n) : DEFAULT_HEIGHT;
+  } catch {
+    return DEFAULT_HEIGHT;
+  }
+}
+
+/** Drag (or arrow keys) to make the editor taller or shorter; double-click restores the default. */
+function useEditorHeight() {
+  const [height, setHeight] = useState(storedHeight);
+  const save = useCallback((h: number) => {
+    const next = clampHeight(h);
+    setHeight(next);
+    try {
+      localStorage.setItem(HEIGHT_KEY, String(next));
+    } catch {
+      /* remembered for this tab only */
+    }
+  }, []);
+  const onPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const handle = e.currentTarget;
+      const startY = e.clientY;
+      const start = height;
+      handle.setPointerCapture(e.pointerId);
+      const move = (ev: PointerEvent) => setHeight(clampHeight(start + ev.clientY - startY));
+      const up = (ev: PointerEvent) => {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        handle.removeEventListener("pointercancel", up);
+        save(start + ev.clientY - startY);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+      handle.addEventListener("pointercancel", up);
+    },
+    [height, save],
+  );
+  const onKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
+      const step = e.shiftKey ? 80 : 20;
+      if (e.key === "ArrowDown") save(height + step);
+      else if (e.key === "ArrowUp") save(height - step);
+      else if (e.key === "Home") save(MIN_HEIGHT);
+      else if (e.key === "End") save(maxHeight());
+      else return;
+      e.preventDefault();
+    },
+    [height, save],
+  );
+  return { height, onPointerDown, onKeyDown, reset: () => save(DEFAULT_HEIGHT) };
+}
+
 export function SqlEditor({ value, onChange, onSelectionChange, onRun, tables, getColumns, defaultTable }: SqlEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const resize = useEditorHeight();
   const viewRef = useRef<EditorView | null>(null);
 
   const tablesRef = useRef(tables);
@@ -211,5 +281,22 @@ export function SqlEditor({ value, onChange, onSelectionChange, onRun, tables, g
     }
   }, [value]);
 
-  return <div ref={containerRef} className="sql-cm-wrapper" />;
+  return (
+    <div className="sql-cm-resizable">
+      <div ref={containerRef} className="sql-cm-wrapper" style={{ height: resize.height }} />
+      <div
+        className="sql-cm-resize"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Cambiar la altura del editor SQL"
+        aria-valuemin={MIN_HEIGHT}
+        aria-valuenow={resize.height}
+        tabIndex={0}
+        title="Arrastra para cambiar la altura · doble clic para restablecer"
+        onPointerDown={resize.onPointerDown}
+        onKeyDown={resize.onKeyDown}
+        onDoubleClick={resize.reset}
+      />
+    </div>
+  );
 }

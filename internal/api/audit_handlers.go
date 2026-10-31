@@ -18,6 +18,7 @@ var actionNames = map[string]string{
 	"POST /api/connections/{id}/saved-queries":                              "query.save",
 	"DELETE /api/connections/{id}/saved-queries/{queryID}":                  "query.saved.delete",
 	"POST /api/connections/{id}/databases/{db}/tables/{table}/import-csv":   "data.import.csv",
+	"POST /api/connections/{id}/databases/{db}/import-sql":                  "data.import.sql",
 	"DELETE /api/auth/sessions/{sessionID}":                                 "auth.session.revoke",
 	"POST /api/auth/sessions/revoke-others":                                 "auth.sessions.revoke_others",
 	"POST /api/connections/{id}/queries/{queryID}/cancel":                   "query.cancel",

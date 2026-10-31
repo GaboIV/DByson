@@ -165,9 +165,11 @@ func (s *Server) routes(assets fs.FS) http.Handler {
 	mux.Handle("DELETE /api/connections/{id}/saved-queries/{queryID}", s.requireAuth(s.deleteSavedQuery))
 	mux.Handle("GET /api/connections/{id}/databases/{db}/relations", s.requireAuth(s.relations))
 	mux.Handle("POST /api/connections/{id}/databases/{db}/tables/{table}/import-csv", s.requireAuth(s.importCSV))
+	mux.Handle("POST /api/connections/{id}/databases/{db}/import-sql", s.requireAuth(s.importSQL))
 	mux.Handle("POST /api/connections/{id}/processes/kill", s.requireAuth(s.killProcess))
 	mux.Handle("POST /api/connections/{id}/mysql-accounts", s.requireAuth(s.mysqlAccounts))
 	mux.Handle("POST /api/connections/{id}/queries/{queryID}/cancel", s.requireAuth(s.cancelQuery))
+	mux.Handle("DELETE /api/connections/{id}/scripts/{scriptID}", s.requireAuth(s.closeScript))
 	mux.Handle("GET /api/connections/{id}/export", s.requireAuth(s.handleExport))
 
 	// Unknown API routes must 404 as JSON, never fall through to the SPA.
@@ -194,6 +196,10 @@ func spaHandler(assets fs.FS) http.Handler {
 			}
 			r = r.Clone(r.Context())
 			r.URL.Path = "/"
+		}
+		// Go's MIME table lacks the web app manifest; with nosniff a text/plain one is ignored.
+		if strings.HasSuffix(name, ".webmanifest") {
+			w.Header().Set("Content-Type", "application/manifest+json")
 		}
 		files.ServeHTTP(w, r)
 	})

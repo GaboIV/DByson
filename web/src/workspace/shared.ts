@@ -23,6 +23,8 @@ export interface ViewContext {
   reportSql: (sql: string, ms?: number | null) => void;
   openView: (view: WorkspaceView) => void;
   newSQL: (query?: string, database?: string) => void;
+  /** Opens the import tool on a .sql dump for the current database. */
+  openImport?: () => void;
   /** Rendered above the view: table view navigation and table-level actions. */
   toolbar?: ReactNode;
 }

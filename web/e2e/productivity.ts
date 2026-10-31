@@ -200,7 +200,7 @@ export function productivityTests() {
         mimeType: "text/plain",
         buffer: Buffer.from("SELECT 'Importada A' AS valor; SELECT 'Importada B' AS valor;"),
       });
-      await d.getByRole("button", { name: "Revisar script en editor SQL" }).click();
+      await d.getByRole("button", { name: "Revisar en el editor" }).click();
       await expect(page.locator(".cm-content:visible")).toContainText("Importada A");
       await page.getByRole("button", { name: "▶ Ejecutar todo", exact: true }).click();
       await expect(page.getByRole("tablist", { name: "Resultados de las consultas" }).getByRole("tab")).toHaveCount(2);

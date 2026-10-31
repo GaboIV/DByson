@@ -158,6 +158,12 @@ CREATE TABLE oidc_accounts (
 );
 CREATE INDEX idx_oidc_user ON oidc_accounts(user_id);
 `,
+
+	// 6: how each session was established, so re-authentication can be asked the
+	// right way (an SSO account may not know its local password).
+	`
+ALTER TABLE sessions ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'password';
+`,
 }
 
 func migrate(db *sql.DB) error {

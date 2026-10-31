@@ -34,8 +34,9 @@ func (q *activeQuery) stop(ctx context.Context) error {
 }
 
 type queryRegistry struct {
-	mu    sync.Mutex
-	items map[string]*activeQuery
+	mu      sync.Mutex
+	items   map[string]*activeQuery
+	scripts scriptRegistry // console scripts pinned to one connection (script_sessions.go)
 }
 
 func (reg *queryRegistry) add(id string, q *activeQuery) error {
@@ -82,6 +83,7 @@ func (reg *queryRegistry) revokeSessions(userID int64, match func(string) bool) 
 		wg.Go(func() { _ = q.stop(ctx) })
 	}
 	wg.Wait()
+	reg.scripts.closeSessions(userID, match)
 }
 
 func (s *Server) cancelQuery(w http.ResponseWriter, r *http.Request) {

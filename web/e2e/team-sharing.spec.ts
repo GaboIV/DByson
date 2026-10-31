@@ -87,8 +87,10 @@ test("Equipo: filtros, protección de administración y contraseña dentro de la
   await page.getByRole("button", { name: "Equipo", exact: true }).click();
   const team = page.getByRole("dialog", { name: "Equipo", exact: true });
   await expect(team.getByRole("combobox", { name: "Rol de gabo", exact: true })).toBeDisabled();
-  await expect(team.getByRole("button", { name: "Eliminar a gabo", exact: true })).toBeDisabled();
-  await team.getByRole("button", { name: "Vincular correo de gabo", exact: true }).click();
+  await team.getByRole("button", { name: "Acciones para gabo", exact: true }).click();
+  const gaboMenu = page.getByRole("menu", { name: "Acciones para gabo" });
+  await expect(gaboMenu.getByRole("menuitem", { name: "Eliminar cuenta", exact: true })).toBeDisabled();
+  await gaboMenu.getByRole("menuitem", { name: "Vincular correo", exact: true }).click();
   const linking = page.getByRole("dialog", { name: "Correo de Workspace · gabo" });
   await linking.getByLabel("Correo corporativo", { exact: true }).fill("gabo@equaly.pe");
   await linking.getByRole("button", { name: "Guardar correo", exact: true }).click();
@@ -97,7 +99,8 @@ test("Equipo: filtros, protección de administración y contraseña dentro de la
   expect(state.users[0].email).toBe("gabo@equaly.pe");
   await team.getByRole("searchbox", { name: "Buscar personas" }).fill("ana");
   await expect(team.locator(".team-member")).toHaveCount(1);
-  await team.getByRole("button", { name: "Cambiar contraseña de ana.garcia", exact: true }).click();
+  await team.getByRole("button", { name: "Acciones para ana.garcia", exact: true }).click();
+  await page.getByRole("menu", { name: "Acciones para ana.garcia" }).getByRole("menuitem", { name: "Cambiar contraseña" }).click();
   const reset = page.getByRole("dialog", { name: "Cambiar contraseña · ana.garcia" });
   await reset.getByLabel("Nueva contraseña", { exact: true }).fill("nueva-contraseña-2026");
   await reset.getByLabel("Mostrar contraseña").check();

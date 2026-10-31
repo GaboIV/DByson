@@ -7,7 +7,14 @@ interface Credential {
   name: string;
   createdAt: number;
 }
-export function PasskeysPanel() {
+/** For an SSO session: no password to ask for; a stale sign-in is confirmed again with the provider. */
+export interface SSOReauth {
+  provider: string;
+  fresh: boolean;
+  reauthenticate: () => void;
+}
+
+export function PasskeysPanel({ sso }: { sso?: SSOReauth }) {
   const [status, setStatus] = useState<{ enabled: boolean; credentials: Credential[] } | null>(null),
     [name, setName] = useState("Mi dispositivo"),
     [password, setPassword] = useState(""),
@@ -63,24 +70,35 @@ export function PasskeysPanel() {
           Nombre de la passkey
           <input value={name} maxLength={100} disabled={busy} onChange={(e) => setName(e.target.value)} />
         </label>
-        <label>
-          Contraseña actual para gestionar passkeys
-          <input
-            type="password"
-            value={password}
-            disabled={busy}
-            autoComplete="current-password"
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
+        {!sso && (
+          <label>
+            Contraseña actual para gestionar passkeys
+            <input
+              type="password"
+              value={password}
+              disabled={busy}
+              autoComplete="current-password"
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+        )}
       </div>
-      <button
-        className="primary"
-        disabled={busy || !status?.enabled || !passkeysSupported() || !password || !name.trim()}
-        onClick={() => void run(() => registerPasskey(name, password))}
-      >
-        Registrar passkey
-      </button>
+      {sso && !sso.fresh ? (
+        <p className="muted">
+          Para gestionar passkeys, vuelve a confirmar tu inicio de sesión.{" "}
+          <button className="link-button" onClick={sso.reauthenticate}>
+            Confirmar con {sso.provider || "SSO"}
+          </button>
+        </p>
+      ) : (
+        <button
+          className="primary"
+          disabled={busy || !status?.enabled || !passkeysSupported() || (!sso && !password) || !name.trim()}
+          onClick={() => void run(() => registerPasskey(name, password))}
+        >
+          Registrar passkey
+        </button>
+      )}
       <ul className="passkey-list">
         {status?.credentials.map((c) => (
           <li key={c.id}>
@@ -89,7 +107,7 @@ export function PasskeysPanel() {
               <small>{new Date(c.createdAt * 1000).toLocaleString()}</small>
             </div>
             <button
-              disabled={busy || !password}
+              disabled={busy || (sso ? !sso.fresh : !password)}
               aria-label={`Eliminar passkey ${c.name}`}
               onClick={() =>
                 void run(async () => {

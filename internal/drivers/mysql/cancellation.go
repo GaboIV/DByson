@@ -20,6 +20,7 @@ type Execution struct {
 	cancel              context.CancelFunc
 	done                chan struct{}
 	finished, cancelled bool
+	pinned              bool // conn belongs to the caller (a console script) and outlives the execution
 }
 
 func NewExecution(parent context.Context, db *sql.DB) (*Execution, error) {
@@ -32,8 +33,19 @@ func NewExecution(parent context.Context, db *sql.DB) (*Execution, error) {
 		conn.Close()
 		return nil, err
 	}
+	return start(parent, db, conn, thread, false), nil
+}
+
+// NewPinnedExecution runs on a connection the caller keeps across executions, such as
+// the one a console script pins so USE and transactions carry over between statements.
+// Close leaves conn open; the caller closes it.
+func NewPinnedExecution(parent context.Context, db *sql.DB, conn *sql.Conn, thread uint64) *Execution {
+	return start(parent, db, conn, thread, true)
+}
+
+func start(parent context.Context, db *sql.DB, conn *sql.Conn, thread uint64, pinned bool) *Execution {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
-	e := &Execution{db: db, conn: conn, thread: thread, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	e := &Execution{db: db, conn: conn, thread: thread, ctx: ctx, cancel: cancel, done: make(chan struct{}), pinned: pinned}
 	go func() {
 		select {
 		case <-parent.Done():
@@ -43,7 +55,7 @@ func NewExecution(parent context.Context, db *sql.DB) (*Execution, error) {
 		case <-e.done:
 		}
 	}()
-	return e, nil
+	return e
 }
 
 func (e *Execution) Run(database, query string, maxRows int) (*QueryResult, error) {
@@ -87,5 +99,7 @@ func (e *Execution) Close() {
 	e.finished = true
 	e.cancel()
 	close(e.done)
-	e.conn.Close()
+	if !e.pinned {
+		e.conn.Close()
+	}
 }

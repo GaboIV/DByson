@@ -5,9 +5,19 @@ import { cellText } from "../clipboard";
 import { enc, errorText, type ViewContext } from "./shared";
 import { ident, parseCSV, type ForeignKey } from "./productivity";
 import { invalidateConnection } from "./catalog";
+import { ImportSql } from "./ImportSql";
 
 type Tool = "import" | "processes" | "accounts" | "diagram";
-export function ProductivityTools({ ctx, onClose }: { ctx: ViewContext; onClose: () => void }) {
+export function ProductivityTools({
+  ctx,
+  onClose,
+  importKind = "csv",
+}: {
+  ctx: ViewContext;
+  onClose: () => void;
+  /** Which import the Importar tab opens on. */
+  importKind?: "csv" | "sql";
+}) {
   const [tool, setTool] = useState<Tool>("import");
   return (
     <Dialog title="Herramientas de productividad" onClose={onClose} className="productivity-dialog">
@@ -27,7 +37,7 @@ export function ProductivityTools({ ctx, onClose }: { ctx: ViewContext; onClose:
       </nav>
       <div className="productivity-tool-body" key={tool}>
         {tool === "import" ? (
-          <ImportData ctx={ctx} onClose={onClose} />
+          <ImportData ctx={ctx} onClose={onClose} initialKind={importKind} />
         ) : tool === "processes" ? (
           <Processes ctx={ctx} />
         ) : tool === "accounts" ? (
@@ -40,10 +50,10 @@ export function ProductivityTools({ ctx, onClose }: { ctx: ViewContext; onClose:
   );
 }
 
-function ImportData({ ctx, onClose }: { ctx: ViewContext; onClose: () => void }) {
+function ImportData({ ctx, onClose, initialKind }: { ctx: ViewContext; onClose: () => void; initialKind: "csv" | "sql" }) {
   const [target, setTarget] = useState(ctx.table),
     [text, setText] = useState(""),
-    [kind, setKind] = useState("csv"),
+    [kind, setKind] = useState<string>(initialKind),
     [delimiter, setDelimiter] = useState(","),
     [nullToken, setNullToken] = useState("\\N"),
     [error, setError] = useState(""),
@@ -89,10 +99,6 @@ function ImportData({ ctx, onClose }: { ctx: ViewContext; onClose: () => void })
   return (
     <section>
       <h4>Importar datos</h4>
-      <p className="muted">
-        CSV: hasta 5000 filas y 512 KB, cabecera con nombres exactos, transacción InnoDB. SQL: abre un borrador para revisar y ejecutar; el
-        script puede completar parcialmente si una sentencia falla.
-      </p>
       <div className="productivity-grid">
         <label>
           Formato
@@ -106,8 +112,8 @@ function ImportData({ ctx, onClose }: { ctx: ViewContext; onClose: () => void })
               setError("");
             }}
           >
-            <option value="csv">CSV</option>
-            <option value="sql">Script SQL</option>
+            <option value="sql">Base de datos · volcado SQL (.sql, .sql.gz)</option>
+            <option value="csv">Tabla · CSV</option>
           </select>
         </label>
         {kind === "csv" && (
@@ -138,91 +144,94 @@ function ImportData({ ctx, onClose }: { ctx: ViewContext; onClose: () => void })
           </>
         )}
       </div>
-      <label className="file-drop">
-        Archivo {kind.toUpperCase()}
-        <input
-          type="file"
-          disabled={busy}
-          accept={kind === "csv" ? ".csv,text/csv" : ".sql,text/plain"}
-          onChange={async (e) => {
-            const generation = ++fileGeneration.current;
-            const f = e.target.files?.[0];
-            setError("");
-            setText("");
-            if (!f) return;
-            if (f.size > 512000) {
-              setError("El archivo supera 512 KB.");
-              return;
-            }
-            try {
-              const content = new TextDecoder("utf-8", { fatal: true }).decode(await f.arrayBuffer());
-              if (generation === fileGeneration.current) setText(content);
-            } catch {
-              if (generation === fileGeneration.current) setError("No se pudo leer el archivo. Usa codificación UTF-8.");
-            }
-          }}
-        />
-      </label>
-      {parseError && (
-        <p role="alert" className="error">
-          {parseError}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-      {done && (
-        <p role="status" className="okmsg">
-          {done}
-        </p>
-      )}
-      {parsed.length > 0 && (
-        <>
-          <p>
-            {parsed.length - 1} filas · {parsed[0].length} columnas · Vista previa de las primeras 5
-          </p>
-          <div className="tool-table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {parsed[0].map((c, i) => (
-                    <th key={i}>{c}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {parsed.slice(1, 6).map((row, i) => (
-                  <tr key={i}>
-                    {row.map((v, j) => (
-                      <td key={j}>{v === nullToken ? <em>NULL</em> : v}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-      {kind === "sql" && text && <pre className="import-preview">{text.slice(0, 8000)}</pre>}
-      <div className="actions">
-        <button
-          className="primary"
-          disabled={busy || !text || !!parseError || (kind === "csv" && (ctx.readOnly || !target || !ctx.database || !parsed.length))}
-          onClick={() => {
-            if (kind === "sql") {
-              ctx.newSQL(text);
-              onClose();
-            } else void execute();
-          }}
-        >
-          {busy ? "Importando…" : kind === "sql" ? "Revisar script en editor SQL" : "Importar CSV"}
-        </button>
-      </div>
-      {ctx.readOnly && <p className="muted">Solo lectura: la importación CSV está bloqueada.</p>}
+      {kind === "sql" ? <ImportSql ctx={ctx} onClose={onClose} /> : csvBody()}
     </section>
   );
+
+  function csvBody() {
+    return (
+      <>
+        <p className="muted">Hasta 5000 filas y 512 KB, cabecera con nombres exactos, en una transacción InnoDB.</p>
+        <label className="file-drop">
+          Archivo {kind.toUpperCase()}
+          <input
+            type="file"
+            disabled={busy}
+            accept={kind === "csv" ? ".csv,text/csv" : ".sql,text/plain"}
+            onChange={async (e) => {
+              const generation = ++fileGeneration.current;
+              const f = e.target.files?.[0];
+              setError("");
+              setText("");
+              if (!f) return;
+              if (f.size > 512000) {
+                setError("El archivo supera 512 KB.");
+                return;
+              }
+              try {
+                const content = new TextDecoder("utf-8", { fatal: true }).decode(await f.arrayBuffer());
+                if (generation === fileGeneration.current) setText(content);
+              } catch {
+                if (generation === fileGeneration.current) setError("No se pudo leer el archivo. Usa codificación UTF-8.");
+              }
+            }}
+          />
+        </label>
+        {parseError && (
+          <p role="alert" className="error">
+            {parseError}
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
+        {done && (
+          <p role="status" className="okmsg">
+            {done}
+          </p>
+        )}
+        {parsed.length > 0 && (
+          <>
+            <p>
+              {parsed.length - 1} filas · {parsed[0].length} columnas · Vista previa de las primeras 5
+            </p>
+            <div className="tool-table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    {parsed[0].map((c, i) => (
+                      <th key={i}>{c}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {parsed.slice(1, 6).map((row, i) => (
+                    <tr key={i}>
+                      {row.map((v, j) => (
+                        <td key={j}>{v === nullToken ? <em>NULL</em> : v}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        <div className="actions">
+          <button
+            className="primary"
+            disabled={busy || !text || !!parseError || ctx.readOnly || !target || !ctx.database || !parsed.length}
+            onClick={() => void execute()}
+          >
+            {busy ? "Importando…" : "Importar CSV"}
+          </button>
+        </div>
+        {ctx.readOnly && <p className="muted">Solo lectura: la importación CSV está bloqueada.</p>}
+      </>
+    );
+  }
 }
 
 function Processes({ ctx }: { ctx: ViewContext }) {

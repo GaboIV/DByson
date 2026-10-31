@@ -141,6 +141,9 @@ func ClassifySQL(sql string) SQLClassification {
 		return SQLClassification{true, "UNKNOWN", err.Error()}
 	}
 	op := operation(tokens)
+	if sessionOnly(op, tokens) {
+		return SQLClassification{Operation: op}
+	}
 	switch op {
 	case "SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN":
 		for _, t := range tokens {
@@ -159,6 +162,54 @@ func ClassifySQL(sql string) SQLClassification {
 	default:
 		return SQLClassification{true, op, "La operacion puede modificar datos, estructura o estado del servidor."}
 	}
+}
+
+// sessionOnly reports statements that only change the state of this client session:
+// the default database, transaction boundaries and session variables. They modify no
+// data or structure by themselves (the statements inside a transaction are classified
+// on their own), so they need no confirmation.
+func sessionOnly(op string, tokens []sqlToken) bool {
+	for _, t := range tokens {
+		if t.quoted {
+			continue
+		}
+		switch t.text {
+		// GLOBAL/PERSIST variables outlive the session; INTO and functions that
+		// lock or wait are not "only session state" whatever statement holds them.
+		case "GLOBAL", "PERSIST", "PERSIST_ONLY", "INTO":
+			return false
+		}
+		if deniedFunction(t.text) {
+			return false
+		}
+	}
+	next := func(i int) string {
+		if i < len(tokens) && !tokens[i].quoted {
+			return tokens[i].text
+		}
+		return ""
+	}
+	switch op {
+	case "USE":
+		return len(tokens) == 2
+	case "BEGIN":
+		return len(tokens) == 1 || (len(tokens) == 2 && next(1) == "WORK")
+	case "START":
+		return next(1) == "TRANSACTION"
+	case "COMMIT", "ROLLBACK", "SAVEPOINT":
+		return true
+	case "RELEASE":
+		return next(1) == "SAVEPOINT"
+	case "SET":
+		// SET PASSWORD and SET DEFAULT ROLE change accounts; SET RESOURCE GROUP
+		// can move other threads.
+		switch next(1) {
+		case "PASSWORD", "DEFAULT", "RESOURCE":
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // hasOptimizerHint reports whether sql carries a /*+ ... */ optimizer hint

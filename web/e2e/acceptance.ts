@@ -353,12 +353,12 @@ export function acceptanceTests() {
       await page.getByLabel("Usuario MySQL", { exact: true }).fill("e2e");
       await page.getByLabel("Contraseña MySQL", { exact: true }).fill("e2e-local-only");
       await page.getByLabel("Base de datos inicial").fill("dbyson_e2e");
-      await page.getByRole("button", { name: "Continuar →" }).click();
-      await page.getByRole("button", { name: "Continuar →" }).click();
+      await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
+      await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
       await page.getByLabel("Seguridad TLS de MySQL").selectOption("disabled");
       await page.getByLabel("Solo lectura", { exact: true }).check();
-      await page.getByRole("button", { name: "Continuar →" }).click();
-      await page.getByRole("button", { name: "Guardar conexión" }).click();
+      await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
+      await page.getByRole("button", { name: /^(Probar y guardar|Guardar conexión)$/ }).click();
       await page.getByRole("button", { name: /^MySQL QA solo lectura/ }).click();
       await page
         .locator(".table-item:visible .table-name")

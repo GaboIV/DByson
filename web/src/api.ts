@@ -89,6 +89,35 @@ export async function api<T>(method: string, path: string, body?: unknown, optio
   return data as T;
 }
 
+/**
+ * Posts a raw body (a file, not JSON) with the session's headers and returns the response
+ * for the caller to read, which may be a stream. Errors are thrown like api() does.
+ */
+export async function apiUpload(path: string, body: Blob | null, headers: Record<string, string>, signal?: AbortSignal): Promise<Response> {
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    signal,
+    headers: {
+      "Content-Type": "application/octet-stream",
+      ...(viewOnly ? { "X-DByson-Read-Only": "1" } : {}),
+      ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+      ...headers,
+    },
+    body,
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+    if (res.status === 401 && csrf && (data.code === "session_expired" || data.error === "authentication required")) {
+      setCsrf("");
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    }
+    if (data.code === "mfa_required") window.dispatchEvent(new CustomEvent("dbyson-mfa-required"));
+    throw new ApiError(res.status, data.error ?? `Error ${res.status}`, data.code);
+  }
+  return res;
+}
+
 export type Env = "local" | "dev" | "staging" | "prod";
 export type TLSMode = "disabled" | "required" | "verify_ca" | "verify_identity";
 
@@ -110,6 +139,10 @@ export interface MFAStatus {
   recoveryCodesLeft: number;
   policy: MFAPolicy;
   sessionVerified: boolean;
+  /** How this session signed in; an "sso" session has no password to confirm. */
+  authMethod?: "password" | "sso" | "passkey";
+  /** The SSO sign-in is recent enough to change factors without signing in again. */
+  ssoReauthFresh?: boolean;
 }
 
 export interface AuditEntry {

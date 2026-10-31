@@ -58,6 +58,7 @@ export function DatabaseOverview({ ctx, tables, filter, onOpenTable, onOpenStruc
             <button onClick={() => void tables.refresh()} disabled={tables.loading || tables.refreshing}>
               🔄 Actualizar
             </button>
+            {!ctx.readOnly && ctx.openImport && <button onClick={ctx.openImport}>⬆ Importar SQL</button>}
             <button onClick={() => ctx.openView("export")}>📦 Exportar BD</button>
             {tables.refreshing && <Spinner label="Actualizando…" />}
           </div>

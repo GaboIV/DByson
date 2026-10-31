@@ -84,7 +84,7 @@ async function newSSH(page: Page) {
   await page.getByLabel("Nombre", { exact: true }).fill("SSH de prueba");
   await page.getByLabel("Host MySQL", { exact: true }).fill("127.0.0.1");
   await page.getByLabel("Usuario MySQL", { exact: true }).fill("tester");
-  await page.getByRole("button", { name: "Continuar →" }).click();
+  await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
   await page.getByLabel("Conectar a través de un túnel SSH").check();
   const hop = page.locator(".ssh-hop").last();
   await hop.getByLabel("Host SSH", { exact: true }).fill("ssh.example.test");
@@ -128,13 +128,13 @@ export function connectionUXTests() {
         expect(route.request().postDataJSON()).toMatchObject({ host: "ssh.example.test", user: "operator", port: 22 });
         await route.fulfill({ json: { fingerprint, algorithm: "ssh-ed25519" } });
       });
-      await page.getByRole("button", { name: "Continuar →" }).click();
+      await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
       const dialog = page.getByRole("dialog", { name: "Verificar servidor SSH" });
       await expect(dialog.getByText(fingerprint, { exact: true })).toBeVisible();
       await dialog.getByRole("button", { name: "Cancelar", exact: true }).click();
       await expect(page.getByLabel("Host SSH", { exact: true })).toHaveValue("ssh.example.test");
       await expect(page.getByLabel("Huella de confianza")).toHaveValue("");
-      await page.getByRole("button", { name: "Continuar →" }).click();
+      await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
       await dialog.getByRole("button", { name: "Confiar y continuar" }).click();
       await expect(page.getByLabel("Seguridad TLS de MySQL")).toBeVisible();
       let tested: ConnectionInput | undefined;
@@ -148,8 +148,8 @@ export function connectionUXTests() {
         saved = route.request().postDataJSON();
         await route.fulfill({ json: { ...profiles[0], ...saved, id: "qa-created" } });
       });
-      await page.getByRole("button", { name: "Continuar →" }).click();
-      await page.getByRole("button", { name: "Probar conexión", exact: true }).click();
+      await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
+      await page.getByRole("button", { name: "Probar", exact: true }).click();
       await expect(page.getByText("Conexión correcta", { exact: true })).toBeVisible();
       expect(tested?.ssh?.fingerprint).toBe(fingerprint);
       await page.getByRole("button", { name: "Guardar conexión", exact: true }).click();
@@ -179,17 +179,17 @@ export function connectionUXTests() {
         if (hosts.length === 2) return route.fulfill({ status: 502, json: { error: "El servidor SSH no responde" } });
         return route.fulfill({ json: { fingerprint, algorithm: "ssh-ed25519" } });
       });
-      await page.getByRole("button", { name: "Continuar →" }).click();
+      await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
       await page.getByRole("dialog", { name: "Verificar bastión SSH" }).getByRole("button", { name: "Confiar y continuar" }).click();
       const server = page.getByRole("dialog", { name: "Verificar servidor SSH" });
       await expect(server.getByRole("alert")).toHaveText("El servidor SSH no responde");
       await expect(server.getByRole("button", { name: "Confiar y continuar" })).toHaveCount(0);
       await server.getByRole("button", { name: "Cancelar", exact: true }).click();
-      await page.getByRole("button", { name: "Continuar →" }).click();
+      await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
       await server.getByRole("button", { name: "Confiar y continuar" }).click();
       await expect(page.getByLabel("Seguridad TLS de MySQL")).toBeVisible();
       expect(hosts).toEqual(["bastion.example.test", "ssh.example.test", "ssh.example.test"]);
-      await page.getByRole("button", { name: /Ruta y SSH/ }).click();
+      await page.getByRole("button", { name: /SSH · opcional/ }).click();
       await expect(bastion.locator(".trusted-fingerprint")).toHaveText(jumpFingerprint);
       await expect(page.locator(".ssh-hop").last().locator(".trusted-fingerprint")).toHaveText(fingerprint);
     });
@@ -197,7 +197,7 @@ export function connectionUXTests() {
     test("Editar: conservar huellas fijadas, detectar un cambio y bloquear saltos sin confirmar", async ({ page }) => {
       await login(page);
       await page.locator(".conn").filter({ hasText: "Producción" }).getByRole("button", { name: "Editar", exact: true }).click();
-      await page.getByRole("button", { name: /Ruta y SSH/ }).click();
+      await page.getByRole("button", { name: /SSH · opcional/ }).click();
       await expect(page.locator(".trusted-fingerprint")).toHaveText(fingerprint);
       let calls = 0;
       await page.route("**/api/connections/qa-prod/ssh/fingerprint", async (route) => {
@@ -211,7 +211,7 @@ export function connectionUXTests() {
       await expect(page.locator(".trusted-fingerprint")).toHaveText(fingerprint);
       await page.getByLabel("Host SSH", { exact: true }).fill("otro.example.test");
       await expect(page.locator(".trusted-fingerprint")).toHaveCount(0);
-      await page.getByRole("button", { name: /Comprobar/ }).click();
+      await page.getByRole("button", { name: /Resumen/ }).click();
       await expect(dialog).toBeVisible();
       await dialog.getByRole("button", { name: "Confiar y continuar" }).click();
       await expect(page.getByRole("heading", { name: "Todo listo para comprobar" })).toBeVisible();
@@ -225,12 +225,12 @@ export function connectionUXTests() {
         await new Promise((resolve) => setTimeout(resolve, 700));
         await route.fulfill({ json: { fingerprint, algorithm: "ssh-ed25519" } }).catch(() => {});
       });
-      await page.getByRole("button", { name: "Continuar →" }).click();
+      await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
       const dialog = page.getByRole("dialog", { name: "Verificar servidor SSH" });
       await expect(dialog.getByRole("button", { name: "Confiar y continuar" })).toBeDisabled();
       await dialog.getByRole("button", { name: "Cancelar", exact: true }).click();
       await page.getByLabel("Host SSH", { exact: true }).fill("corregido.example.test");
-      await page.getByRole("button", { name: "Continuar →" }).click();
+      await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
       await expect(dialog.getByText("corregido.example.test:22", { exact: true })).toBeVisible();
       await dialog.getByRole("button", { name: "Confiar y continuar" }).click();
       await expect(page.getByLabel("Seguridad TLS de MySQL")).toBeVisible();
@@ -270,10 +270,10 @@ export function connectionUXTests() {
           }, theme);
           await noHorizontalOverflow(page);
           await page.screenshot({ path: info.outputPath(`destino-${theme}.png`), fullPage: true });
-          const footer = await page.getByRole("button", { name: "Continuar →" }).boundingBox();
+          const footer = await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).boundingBox();
           expect(footer!.y + footer!.height).toBeLessThanOrEqual(viewport.height + 1);
         }
-        await page.getByRole("button", { name: "Continuar →" }).click();
+        await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
         await page.getByLabel(/^Autenticación/).selectOption("key");
         for (const theme of ["light", "dark"]) {
           await page.evaluate((value) => {
@@ -284,7 +284,7 @@ export function connectionUXTests() {
         }
         await page.getByLabel(/^Autenticación/).selectOption("password");
         await page.route("**/api/ssh/fingerprint", async (route) => route.fulfill({ json: { fingerprint, algorithm: "ssh-ed25519" } }));
-        await page.getByRole("button", { name: "Continuar →" }).click();
+        await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
         const dialog = page.getByRole("dialog", { name: "Verificar servidor SSH" });
         await expect(dialog.getByText(fingerprint, { exact: true })).toBeVisible();
         for (const theme of ["light", "dark"]) {
@@ -303,7 +303,7 @@ export function connectionUXTests() {
           await noHorizontalOverflow(page);
           await page.screenshot({ path: info.outputPath(`proteccion-${theme}.png`), fullPage: true });
         }
-        await page.getByRole("button", { name: "Continuar →" }).click();
+        await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
         for (const theme of ["light", "dark"]) {
           await page.evaluate((value) => {
             document.documentElement.dataset.theme = value;

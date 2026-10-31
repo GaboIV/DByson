@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -16,6 +17,20 @@ import (
 )
 
 func (s *Server) openDB(ctx context.Context, r *http.Request, targetDB string) (*sql.DB, *connRecord, error) {
+	rec, open, err := s.authorizeDB(ctx, r, targetDB)
+	if err != nil {
+		return nil, nil, err
+	}
+	db, err := open()
+	if err != nil {
+		return nil, nil, err
+	}
+	return db, rec, nil
+}
+
+// authorizeDB checks the caller may use the connection now (grant, 2FA policy, read-only
+// mode) and returns how to open it, without connecting yet.
+func (s *Server) authorizeDB(ctx context.Context, r *http.Request, targetDB string) (*connRecord, func() (*sql.DB, error), error) {
 	rec, sec, err := s.loadConnection(ctx, r, GrantUse)
 	if err != nil {
 		return nil, nil, err
@@ -40,11 +55,7 @@ func (s *Server) openDB(ctx context.Context, r *http.Request, targetDB string) (
 	}
 	cfg := in.driverConfig(sec)
 	cfg.ReadOnly = rec.ReadOnly
-	db, err := mysql.Open(cfg, s.connectionDialer(sec))
-	if err != nil {
-		return nil, nil, err
-	}
-	return db, rec, nil
+	return rec, func() (*sql.DB, error) { return mysql.Open(cfg, s.connectionDialer(sec)) }, nil
 }
 
 // serverIsMariaDB reports whether the connection's backend is MariaDB, so browse
@@ -676,6 +687,8 @@ type queryRequest struct {
 	Query              string `json:"query"`
 	Database           string `json:"database"`
 	ConfirmDestructive bool   `json:"confirmDestructive"`
+	// ScriptID pins every statement of a console script to one connection (script_sessions.go).
+	ScriptID string `json:"scriptId"`
 	confirmationInput
 }
 
@@ -720,13 +733,15 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, rec, err := s.openDB(ctx, r, req.Database)
+	if req.ScriptID != "" && !queryIDPattern.MatchString(req.ScriptID) {
+		writeError(w, 400, "invalid script identifier")
+		return
+	}
+	rec, open, err := s.authorizeDB(ctx, r, req.Database)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	defer db.Close()
-
 	if rec.ReadOnly && policy.IsReadOnlyViolation(req.Query) {
 		writeError(w, http.StatusForbidden, "connection is configured as read-only")
 		return
@@ -746,15 +761,50 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	execution, err := mysql.NewExecution(ctx, db)
-	if err != nil {
-		writeError(w, 502, err.Error())
-		return
+	var execution *mysql.Execution
+	runDatabase := req.Database
+	if req.ScriptID != "" {
+		owner := &scriptSession{userID: sess.UserID, sessionID: sess.ID, connectionID: r.PathValue("id"), readOnly: rec.ReadOnly}
+		sc, created, err := s.queries.scripts.acquire(ctx, req.ScriptID, owner, open)
+		switch {
+		case errors.Is(err, errScriptNotFound):
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		case errors.Is(err, errScriptBusy), errors.Is(err, errTooManyScripts):
+			writeError(w, 429, err.Error())
+			return
+		case err != nil:
+			s.fail(w, err)
+			return
+		}
+		defer s.queries.scripts.release(sc)
+		if sc.readOnly != rec.ReadOnly {
+			// Access changed mid-script: never keep running on a connection opened under the old mode.
+			s.queries.scripts.remove(req.ScriptID, sc)
+			writeError(w, http.StatusConflict, errScriptNotFound.Error())
+			return
+		}
+		// After the first statement, the script's own USE statements decide the database.
+		if !created {
+			runDatabase = ""
+		}
+		execution = newScriptExecution(ctx, sc)
+	} else {
+		db, err := open()
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		defer db.Close()
+		if execution, err = mysql.NewExecution(ctx, db); err != nil {
+			writeError(w, 502, err.Error())
+			return
+		}
 	}
 	active.mu.Lock()
 	active.execution = execution
 	active.mu.Unlock()
-	result, err := execution.Run(req.Database, req.Query, 1000)
+	result, err := execution.Run(runDatabase, req.Query, 1000)
 	if err != nil {
 		cancelled := ctx.Err() != nil
 		active.mu.Lock()

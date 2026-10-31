@@ -8,7 +8,7 @@ import { Connections } from "./Connections";
 import { Dialog } from "./Dialog";
 import { useConfirm } from "./Confirm";
 import { PreferencesDialog, QueryHistoryDialog, usePreferences } from "./Preferences";
-import { AuditDialog, SecurityDialog } from "./Security";
+import { AuditDialog, RESUME_SECURITY_KEY, SecurityDialog } from "./Security";
 import { TeamDialog } from "./Team";
 import { TabStrip, type TabItem } from "./TabStrip";
 import { Workspace, type WorkspaceView } from "./Workspace";
@@ -60,6 +60,15 @@ export function Workbench({ session, onLogout }: { session: Session; onLogout: (
   const lastPane = useRef<Record<string, string>>({});
 
   useEffect(() => {
+    // Back from re-confirming an SSO sign-in to change 2FA: continue where the user was.
+    try {
+      if (sessionStorage.getItem(RESUME_SECURITY_KEY)) {
+        sessionStorage.removeItem(RESUME_SECURITY_KEY);
+        setSecurity(true);
+      }
+    } catch {
+      /* storage unavailable */
+    }
     const ask = () => setSecurity(true);
     window.addEventListener("dbyson-mfa-required", ask);
     return () => window.removeEventListener("dbyson-mfa-required", ask);

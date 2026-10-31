@@ -34,6 +34,11 @@ const (
 	mfaMaxChallenges  = 1000
 	mfaRequiredCode   = "mfa_required"
 	mfaRequiredReason = "Esta acción requiere verificación en dos pasos. Actívala en Seguridad y vuelve a iniciar sesión."
+
+	// An SSO account may have no local password it knows. A sign-in through the identity
+	// provider this recent stands in for the password when changing its factors.
+	ssoReauthWindow    = 15 * time.Minute
+	reauthRequiredCode = "reauth_required"
 )
 
 var errMFARequired = errors.New(mfaRequiredReason)
@@ -69,6 +74,7 @@ type mfaChallenge struct {
 	userID   int64
 	username string
 	role     string
+	method   string // how the first factor was proven (auth.AuthPassword or auth.AuthSSO)
 	expires  time.Time
 	attempts int
 }
@@ -83,7 +89,7 @@ func challengeKey(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (c *mfaChallenges) create(userID int64, username, role string) (string, error) {
+func (c *mfaChallenges) create(userID int64, username, role, method string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -100,7 +106,7 @@ func (c *mfaChallenges) create(userID int64, username, role string) (string, err
 	if len(c.m) >= mfaMaxChallenges {
 		return "", errors.New("too many pending sign-ins")
 	}
-	c.m[challengeKey(token)] = &mfaChallenge{userID: userID, username: username, role: role, expires: now.Add(mfaChallengeTTL)}
+	c.m[challengeKey(token)] = &mfaChallenge{userID: userID, username: username, role: role, method: method, expires: now.Add(mfaChallengeTTL)}
 	return token, nil
 }
 
@@ -208,9 +214,27 @@ func (s *Server) replaceRecoveryCodes(ctx context.Context, tx *sql.Tx, userID in
 	return codes, nil
 }
 
-// checkPassword re-authenticates the session user before changing their factors.
+// ssoReauthFresh reports whether sess was opened through SSO recently enough to change
+// its factors without a password.
+func ssoReauthFresh(sess *auth.Session) bool {
+	return sess.AuthMethod == auth.AuthSSO && time.Since(time.Unix(sess.CreatedAt, 0)) <= ssoReauthWindow
+}
+
+// checkPassword re-authenticates the session user before changing their factors. A
+// session opened through SSO a few minutes ago counts as re-authenticated; an older
+// one is asked to sign in with the identity provider again (code reauth_required).
 func (s *Server) checkPassword(w http.ResponseWriter, r *http.Request, password string) bool {
 	sess := sessionFrom(r)
+	if password == "" && sess.AuthMethod == auth.AuthSSO {
+		if ssoReauthFresh(sess) {
+			return true
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error": "Por seguridad, vuelve a confirmar tu identidad con tu proveedor de inicio de sesión.",
+			"code":  reauthRequiredCode,
+		})
+		return false
+	}
 	key := "reauth|" + strconv.FormatInt(sess.UserID, 10)
 	if blocked, wait := s.throttle.Blocked(key); blocked {
 		tooManyAttempts(w, wait)
@@ -248,6 +272,7 @@ func (s *Server) handleMFAStatus(w http.ResponseWriter, r *http.Request) {
 		`SELECT COUNT(*) FROM recovery_codes WHERE user_id = ? AND used_at IS NULL`, sess.UserID).Scan(&left)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": st.enabled, "recoveryCodesLeft": left, "policy": s.MFAPolicy, "sessionVerified": sess.MFA,
+		"authMethod": sess.AuthMethod, "ssoReauthFresh": ssoReauthFresh(sess),
 	})
 }
 
@@ -492,5 +517,5 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 		s.clearShortCookie(w, r, mfaPendingCookie, "/api/auth/mfa")
 	}
 	s.record(r.Context(), e)
-	s.startSession(w, r, ch.userID, ch.username, ch.role, true)
+	s.startSession(w, r, ch.userID, ch.username, ch.role, ch.method, true)
 }

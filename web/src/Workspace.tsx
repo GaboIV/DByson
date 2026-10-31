@@ -81,7 +81,7 @@ export function Workspace(props: WorkspaceProps) {
   const [error, setError] = useState("");
   const [lastSql, setLastSql] = useState<{ sql: string; ms: number | null } | null>(null);
   const [creating, setCreating] = useState<"table" | "database" | null>(null);
-  const [tools, setTools] = useState(false);
+  const [tools, setTools] = useState<false | "csv" | "sql">(false);
 
   const databases = useDatabases(connection.id, isActive);
   const tables = useTables(connection.id, database, isActive && !!database);
@@ -174,7 +174,8 @@ export function Workspace(props: WorkspaceProps) {
     }
   }
 
-  const ctx: ViewContext = { connection, database, table, readOnly, isActive, confirmedApi, copy, reportSql, openView, newSQL };
+  const openImport = () => setTools("sql");
+  const ctx: ViewContext = { connection, database, table, readOnly, isActive, confirmedApi, copy, reportSql, openView, newSQL, openImport };
 
   // Table tabs always show their view navigation (also on query tabs of the table);
   // the fallback strip and the table-level actions only make sense on the table views.
@@ -291,7 +292,7 @@ export function Workspace(props: WorkspaceProps) {
           activeView={view}
           onOpenTable={openTable}
           onCreateTable={() => setCreating("table")}
-          onTools={() => setTools(true)}
+          onTools={() => setTools("csv")}
         />
 
         <main className={`ws-content${table && activeTab === "data" ? " ws-content-table-data" : ""}`}>
@@ -366,7 +367,7 @@ export function Workspace(props: WorkspaceProps) {
         </main>
       </div>
 
-      {tools && <ProductivityTools ctx={ctx} onClose={() => setTools(false)} />}
+      {tools && <ProductivityTools ctx={ctx} importKind={tools} onClose={() => setTools(false)} />}
       {confirmationDialog}
       {copyNotice}
       {creating === "table" && (

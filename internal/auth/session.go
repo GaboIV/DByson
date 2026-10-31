@@ -26,8 +26,17 @@ type Session struct {
 	Username   string
 	Role       string
 	CSRF       string
-	MFA        bool // the session was established (or upgraded) with a second factor
+	MFA        bool   // the session was established (or upgraded) with a second factor
+	AuthMethod string // AuthPassword, AuthSSO or AuthPasskey
+	CreatedAt  int64
 }
+
+// How a session was established.
+const (
+	AuthPassword = "password"
+	AuthSSO      = "sso"
+	AuthPasskey  = "passkey"
+)
 
 // Sessions persists sessions in SQLite. Only a SHA-256 of the token is stored, so a leaked
 // database does not yield usable session cookies.
@@ -56,7 +65,7 @@ func (s *Sessions) Create(ctx context.Context, userID int64, mfa bool) (token, c
 	return s.CreateWithDetails(ctx, userID, mfa, SessionDetails{})
 }
 
-type SessionDetails struct{ IP, UserAgent, ClientCert string }
+type SessionDetails struct{ IP, UserAgent, ClientCert, AuthMethod string }
 
 func (s *Sessions) CreateWithDetails(ctx context.Context, userID int64, mfa bool, details SessionDetails) (token, csrf string, err error) {
 	if token, err = randomToken(); err != nil {
@@ -70,9 +79,13 @@ func (s *Sessions) CreateWithDetails(ctx context.Context, userID int64, mfa bool
 	if err != nil {
 		return "", "", err
 	}
+	method := details.AuthMethod
+	if method == "" {
+		method = AuthPassword
+	}
 	_, err = s.DB.ExecContext(ctx,
-		`INSERT INTO sessions (id_hash, user_id, csrf, created_at, last_seen, expires_at, mfa, public_id, ip, user_agent, client_cert) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		hashToken(token), userID, csrf, now, now, now+int64(AbsoluteTimeout.Seconds()), mfa, id, details.IP, details.UserAgent, details.ClientCert)
+		`INSERT INTO sessions (id_hash, user_id, csrf, created_at, last_seen, expires_at, mfa, public_id, ip, user_agent, client_cert, auth_method) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		hashToken(token), userID, csrf, now, now, now+int64(AbsoluteTimeout.Seconds()), mfa, id, details.IP, details.UserAgent, details.ClientCert, method)
 	return
 }
 
@@ -85,9 +98,9 @@ func (s *Sessions) Lookup(ctx context.Context, token string) (*Session, error) {
 	var sess Session
 	var lastSeen, expires int64
 	err := s.DB.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.role, s.csrf, s.mfa, s.last_seen, s.expires_at, s.public_id, s.client_cert
+		SELECT u.id, u.username, u.role, s.csrf, s.mfa, s.last_seen, s.expires_at, s.public_id, s.client_cert, s.auth_method, s.created_at
 		FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id_hash = ? AND u.disabled = 0`, h).
-		Scan(&sess.UserID, &sess.Username, &sess.Role, &sess.CSRF, &sess.MFA, &lastSeen, &expires, &sess.ID, &sess.ClientCert)
+		Scan(&sess.UserID, &sess.Username, &sess.Role, &sess.CSRF, &sess.MFA, &lastSeen, &expires, &sess.ID, &sess.ClientCert, &sess.AuthMethod, &sess.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoSession
 	}
@@ -115,11 +128,12 @@ type SessionInfo struct {
 	MFA              bool   `json:"mfa"`
 	Current          bool   `json:"current"`
 	CertificateBound bool   `json:"certificateBound"`
+	AuthMethod       string `json:"authMethod"`
 }
 
 func (s *Sessions) List(ctx context.Context, userID int64, currentID string) ([]SessionInfo, error) {
 	now := s.Now().Unix()
-	rows, err := s.DB.QueryContext(ctx, `SELECT public_id, ip, user_agent, created_at, last_seen, expires_at, mfa, client_cert <> '' FROM sessions WHERE user_id = ? AND expires_at > ? AND last_seen > ? ORDER BY created_at DESC, public_id`, userID, now, now-int64(IdleTimeout.Seconds()))
+	rows, err := s.DB.QueryContext(ctx, `SELECT public_id, ip, user_agent, created_at, last_seen, expires_at, mfa, client_cert <> '', auth_method FROM sessions WHERE user_id = ? AND expires_at > ? AND last_seen > ? ORDER BY created_at DESC, public_id`, userID, now, now-int64(IdleTimeout.Seconds()))
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +141,7 @@ func (s *Sessions) List(ctx context.Context, userID int64, currentID string) ([]
 	out := []SessionInfo{}
 	for rows.Next() {
 		var item SessionInfo
-		if err := rows.Scan(&item.ID, &item.IP, &item.UserAgent, &item.CreatedAt, &item.LastSeen, &item.ExpiresAt, &item.MFA, &item.CertificateBound); err != nil {
+		if err := rows.Scan(&item.ID, &item.IP, &item.UserAgent, &item.CreatedAt, &item.LastSeen, &item.ExpiresAt, &item.MFA, &item.CertificateBound, &item.AuthMethod); err != nil {
 			return nil, err
 		}
 		item.Current = item.ID == currentID

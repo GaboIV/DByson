@@ -22,7 +22,38 @@ interface Props {
   onCancel: () => void;
   canShare?: boolean;
 }
-const steps = ["Destino", "Ruta y SSH", "Protección", "Comprobar"];
+const steps = ["Destino", "SSH · opcional", "Protección · opcional", "Resumen"];
+
+/** Name used when the user leaves it empty: the base and host say what the connection is. */
+const defaultName = (d: ConnectionInput) => (d.database ? `${d.database} · ${d.host}` : d.host);
+
+/** Reads mysql://user:pass@host:3306/db (also mariadb:// and jdbc:mysql://) into form fields. */
+export function parseConnectionURL(text: string): Partial<ConnectionInput> | null {
+  const raw = text.trim().replace(/^jdbc:/i, "");
+  if (!/^(mysql|mariadb|mysqlx?):\/\//i.test(raw)) return null;
+  try {
+    const url = new URL(raw.replace(/^[a-z]+:/i, "http:"));
+    const out: Partial<ConnectionInput> = { host: url.hostname.replace(/^\[|\]$/g, "") };
+    if (url.port) out.port = Number(url.port);
+    if (url.username) out.username = decodeURIComponent(url.username);
+    if (url.password) out.password = decodeURIComponent(url.password);
+    const db = decodeURIComponent(url.pathname.replace(/^\//, ""));
+    if (db) out.database = db;
+    const mode = (url.searchParams.get("ssl-mode") || url.searchParams.get("sslMode") || "").toLowerCase();
+    const tls: Record<string, TLSMode> = {
+      disabled: "disabled",
+      required: "required",
+      verify_ca: "verify_ca",
+      verify_identity: "verify_identity",
+    };
+    if (tls[mode]) out.tlsMode = tls[mode];
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+const TLS_ERROR = /tls|ssl|x509|certificate|certificado/i;
 const normalizeSSH = (c?: SSHConfig): SSHConfig => ({
   ...emptyHop(),
   ...c,
@@ -203,6 +234,7 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
   const [error, setError] = useState("");
   const [test, setTest] = useState<TestResponse | null>(null);
   const [busy, setBusy] = useState("");
+  const [url, setUrl] = useState("");
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [trust, setTrust] = useState<SSHTrust | null>(null);
   const trustChoice = useRef<((accepted: boolean) => void) | null>(null);
@@ -213,6 +245,10 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
     const container = form.current?.closest(".home-content");
     if (container) container.scrollTop = 0;
   }, [step]);
+  // The result sits under the fields; bring it into view so a failure is never missed.
+  useEffect(() => {
+    if (test) form.current?.querySelector(".test-result")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [test]);
   useEffect(
     () => () => {
       request.current?.abort();
@@ -231,7 +267,7 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
     update({ ssh: { ...ssh, ...p } });
   }
   function payload(value = draft) {
-    const p = { ...value };
+    const p = { ...value, name: value.name.trim() || defaultName(value) };
     for (const k of ["password", "caCert", "clientCert", "clientKey"] as const) if (!p[k]) delete p[k];
     return p;
   }
@@ -321,14 +357,13 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
       if (!controller.signal.aborted) setBusy("");
     }
   }
-  async function runTest() {
-    if (busy) return;
-    setBusy("verify");
-    const verified = await verifySSH();
-    if (!verified) {
-      setBusy("");
-      return;
-    }
+  function missingDestination() {
+    if (draft.host.trim() && draft.username.trim()) return false;
+    setStep(0);
+    setError("Indica al menos el host y el usuario de MySQL.");
+    return true;
+  }
+  async function testDraft(verified: ConnectionInput): Promise<TestResponse | null> {
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
@@ -336,29 +371,42 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
     setError("");
     setTest(null);
     try {
-      setTest(
-        await api<TestResponse>(
-          "POST",
-          existing ? `/api/connections/${existing.id}/test-draft` : "/api/connections/test",
-          payload(verified),
-          {
-            signal: controller.signal,
-          },
-        ),
+      const result = await api<TestResponse>(
+        "POST",
+        existing ? `/api/connections/${existing.id}/test-draft` : "/api/connections/test",
+        payload(verified),
+        { signal: controller.signal },
       );
+      if (!controller.signal.aborted) setTest(result);
+      return controller.signal.aborted ? null : result;
     } catch (e) {
       if (!controller.signal.aborted) setError(message(e));
+      return null;
     } finally {
       if (!controller.signal.aborted) setBusy("");
     }
   }
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (busy) return;
-    if (step < 3) {
-      await navigate(step + 1);
+  async function runTest(overrides?: Partial<ConnectionInput>) {
+    if (busy || missingDestination()) return;
+    if (overrides) setDraft((d) => ({ ...d, ...overrides }));
+    setBusy("verify");
+    const verified = await verifySSH();
+    if (!verified) {
+      setBusy("");
       return;
     }
+    await testDraft({ ...verified, ...overrides });
+  }
+  function applyURL(text: string) {
+    setUrl(text);
+    const parsed = parseConnectionURL(text);
+    if (parsed) update(parsed);
+  }
+  // Saving works from any step: the optional steps only refine the defaults. An untested
+  // draft is tested first, and a failure is shown with the choice to save anyway.
+  async function submit(e: FormEvent, anyway = false) {
+    e.preventDefault();
+    if (busy || missingDestination()) return;
     if (
       existing?.shared &&
       !draft.shared &&
@@ -370,6 +418,10 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
     if (!verified) {
       setBusy("");
       return;
+    }
+    if (!anyway && !test?.ok) {
+      const result = await testDraft(verified);
+      if (!result?.ok) return;
     }
     setBusy("save");
     setError("");
@@ -455,16 +507,40 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
               </button>
             </div>
             <div className="destination-fields">
+              {!existing && (
+                <label className="connection-url">
+                  <span>
+                    Pegar URL de conexión{" "}
+                    <small className="muted" aria-hidden="true">
+                      · opcional, rellena los campos
+                    </small>
+                  </span>
+                  <input
+                    value={url}
+                    onChange={(e) => applyURL(e.target.value)}
+                    placeholder="mysql://usuario:contraseña@host:3306/base"
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                  {url && !parseConnectionURL(url) && (
+                    <small className="warn">Usa el formato mysql://usuario:contraseña@host:puerto/base</small>
+                  )}
+                </label>
+              )}
               <div className="form-columns destination-name">
                 <label>
-                  Nombre
+                  <span>
+                    Nombre{" "}
+                    <small className="muted" aria-hidden="true">
+                      · opcional
+                    </small>
+                  </span>
                   <input
-                    autoFocus
+                    autoFocus={Boolean(existing)}
                     value={draft.name}
                     onChange={(e) => update({ name: e.target.value })}
-                    required
                     maxLength={100}
-                    placeholder="Desarrollo · facturación"
+                    placeholder={draft.host ? defaultName(draft) : "Se genera a partir del host"}
                   />
                 </label>
                 <label>
@@ -479,7 +555,13 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
               <div className="form-columns destination-address">
                 <label>
                   Host MySQL
-                  <input value={draft.host} onChange={(e) => update({ host: e.target.value })} required placeholder="db.ejemplo.com" />
+                  <input
+                    autoFocus={!existing}
+                    value={draft.host}
+                    onChange={(e) => update({ host: e.target.value })}
+                    required
+                    placeholder="db.ejemplo.com"
+                  />
                 </label>
                 <label>
                   Puerto MySQL
@@ -724,22 +806,36 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
                 Las claves privadas SSH se guardan cifradas y se comparten por separado. El perfil compartido conserva su referencia.
               </p>
             )}
-            <button type="button" onClick={() => void runTest()}>
-              Probar conexión
-            </button>
-            {test && (
-              <div className={test.ok ? "test-result success" : "test-result failure"} role="status">
-                <strong>{test.ok ? "Conexión correcta" : "No se pudo conectar"}</strong>
-                <p>
-                  {test.ok && test.result
-                    ? `${test.result.serverVersion} · ${test.result.latencyMs} ms · ${ssh.enabled ? "túnel SSH · " : ""}${test.result.tls ? `TLS ${test.result.tlsVersion}` : "sin TLS MySQL"}`
-                    : test.error}
-                </p>
-              </div>
-            )}
           </>
         )}
       </fieldset>
+      {test && (
+        <div className={test.ok ? "test-result success" : "test-result failure"} role="status">
+          <strong>{test.ok ? "Conexión correcta" : "No se pudo conectar"}</strong>
+          <p>
+            {test.ok && test.result
+              ? `${test.result.serverVersion} · ${test.result.latencyMs} ms · ${ssh.enabled ? "túnel SSH · " : ""}${test.result.tls ? test.result.tlsVersion || "TLS" : "sin TLS MySQL"}`
+              : test.error}
+          </p>
+          {!test.ok && (
+            <div className="test-fixes">
+              {TLS_ERROR.test(test.error || "") && draft.tlsMode !== "required" && draft.tlsMode !== "disabled" && (
+                <button type="button" disabled={Boolean(busy)} onClick={() => void runTest({ tlsMode: "required" })}>
+                  Reintentar con TLS sin verificar
+                </button>
+              )}
+              {TLS_ERROR.test(test.error || "") && draft.tlsMode !== "disabled" && (
+                <button type="button" disabled={Boolean(busy)} onClick={() => void runTest({ tlsMode: "disabled" })}>
+                  Reintentar sin TLS
+                </button>
+              )}
+              <button type="button" disabled={Boolean(busy)} onClick={(e) => void submit(e, true)}>
+                Guardar igualmente
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       {busy && (
         <p className="muted" role="status">
           {busy === "verify"
@@ -766,8 +862,16 @@ export function ConnectionForm({ existing, initial, onSaved, onCancel, canShare 
             Anterior
           </button>
         )}
+        {step < 3 && (
+          <button type="button" onClick={() => void navigate(step + 1)} disabled={Boolean(busy)}>
+            {step === 0 ? "Más opciones (SSH, TLS) →" : "Siguiente →"}
+          </button>
+        )}
+        <button type="button" onClick={() => void runTest()} disabled={Boolean(busy)}>
+          Probar
+        </button>
         <button className="primary" disabled={Boolean(busy)}>
-          {step === 3 ? "Guardar conexión" : "Continuar →"}
+          {test?.ok ? "Guardar conexión" : "Probar y guardar"}
         </button>
       </div>
       {copyNotice}

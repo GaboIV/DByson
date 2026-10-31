@@ -20,11 +20,11 @@ test("setup → conexión → tabla → editar → insertar → modificar → SQ
   await page.getByLabel("Usuario MySQL", { exact: true }).fill("e2e");
   await page.getByLabel("Contraseña MySQL", { exact: true }).fill("e2e-local-only");
   await page.getByLabel("Base de datos inicial").fill("dbyson_e2e");
-  await page.getByRole("button", { name: "Continuar →" }).click();
-  await page.getByRole("button", { name: "Continuar →" }).click();
+  await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
+  await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
   await page.getByLabel("Seguridad TLS de MySQL").selectOption("disabled");
-  await page.getByRole("button", { name: "Continuar →" }).click();
-  await page.getByRole("button", { name: "Probar conexión" }).click();
+  await page.getByRole("button", { name: /^(Más opciones \(SSH, TLS\)|Siguiente) →$/ }).click();
+  await page.getByRole("button", { name: "Probar", exact: true }).click();
   await expect(page.getByText("Conexión correcta", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Guardar conexión" }).click();
   await page.getByRole("button", { name: /^MySQL E2E/ }).click();

@@ -243,7 +243,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		}
 		if localMFA {
 			// SSO proved the identity, not the second factor this account requires.
-			token, err := s.mfaPending.create(userID, username, role)
+			token, err := s.mfaPending.create(userID, username, role, auth.AuthSSO)
 			if err != nil {
 				fail(audit.OutcomeError, "could not start second factor", "failed")
 				return
@@ -261,7 +261,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	attempt.Outcome = audit.OutcomeOK
 	s.record(r.Context(), attempt)
 	token, _, err := s.sessions.CreateWithDetails(r.Context(), userID, mfa,
-		auth.SessionDetails{IP: s.clientIP(r), UserAgent: truncateRunes(r.UserAgent(), 512), ClientCert: clientCertificate(r)})
+		auth.SessionDetails{IP: s.clientIP(r), UserAgent: truncateRunes(r.UserAgent(), 512), ClientCert: clientCertificate(r), AuthMethod: auth.AuthSSO})
 	if err != nil {
 		fail(audit.OutcomeError, "could not create session", "failed")
 		return

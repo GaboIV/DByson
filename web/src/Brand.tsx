@@ -1,4 +1,4 @@
-import logo from "../../logo-dbyson.png";
+import logo from "./assets/logo-128.png";
 
 export function Brand() {
   return (

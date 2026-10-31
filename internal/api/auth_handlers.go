@@ -171,22 +171,23 @@ type sessionResponse struct {
 	MFA        bool   `json:"mfa"`        // this session was verified with a second factor
 	MFAEnabled bool   `json:"mfaEnabled"` // the account has 2FA configured
 	MFAPolicy  string `json:"mfaPolicy"`
+	AuthMethod string `json:"authMethod"`
 }
 
-func (s *Server) sessionView(ctx context.Context, userID int64, username, role, csrf string, mfa bool) sessionResponse {
+func (s *Server) sessionView(ctx context.Context, userID int64, username, role, csrf, method string, mfa bool) sessionResponse {
 	var enabled bool
 	_ = s.Store.DB.QueryRowContext(ctx, `SELECT totp_enabled FROM users WHERE id = ?`, userID).Scan(&enabled)
-	return sessionResponse{Username: username, Role: role, CSRF: csrf, MFA: mfa, MFAEnabled: enabled, MFAPolicy: s.MFAPolicy}
+	return sessionResponse{Username: username, Role: role, CSRF: csrf, MFA: mfa, MFAEnabled: enabled, MFAPolicy: s.MFAPolicy, AuthMethod: method}
 }
 
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int64, username, role string, mfa bool) {
-	token, csrf, err := s.sessions.CreateWithDetails(r.Context(), userID, mfa, auth.SessionDetails{IP: s.clientIP(r), UserAgent: truncateRunes(r.UserAgent(), 512), ClientCert: clientCertificate(r)})
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int64, username, role, method string, mfa bool) {
+	token, csrf, err := s.sessions.CreateWithDetails(r.Context(), userID, mfa, auth.SessionDetails{IP: s.clientIP(r), UserAgent: truncateRunes(r.UserAgent(), 512), ClientCert: clientCertificate(r), AuthMethod: method})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not create session")
 		return
 	}
 	s.setCookie(w, r, token)
-	writeJSON(w, http.StatusOK, s.sessionView(r.Context(), userID, username, role, csrf, mfa))
+	writeJSON(w, http.StatusOK, s.sessionView(r.Context(), userID, username, role, csrf, method, mfa))
 }
 
 func (s *Server) userCount(ctx context.Context) (int, error) {
@@ -270,7 +271,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := res.LastInsertId()
 	s.record(r.Context(), audit.Entry{UserID: id, Username: in.Username, IP: s.clientIP(r), Action: "auth.setup", Outcome: audit.OutcomeOK})
-	s.startSession(w, r, id, in.Username, "admin", false)
+	s.startSession(w, r, id, in.Username, "admin", auth.AuthPassword, false)
 }
 
 func tooManyAttempts(w http.ResponseWriter, wait time.Duration) {
@@ -339,7 +340,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if mfaEnabled {
 		// Password accepted, but no session until the second factor is verified.
-		token, err := s.mfaPending.create(id, name, role)
+		token, err := s.mfaPending.create(id, name, role, auth.AuthPassword)
 		if err != nil {
 			writeError(w, http.StatusServiceUnavailable, "try again later")
 			return
@@ -351,7 +352,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	attempt.Outcome = audit.OutcomeOK
 	s.record(r.Context(), attempt)
-	s.startSession(w, r, id, name, role, false)
+	s.startSession(w, r, id, name, role, auth.AuthPassword, false)
 }
 
 func truncateRunes(s string, n int) string {
@@ -373,5 +374,5 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFrom(r)
-	writeJSON(w, http.StatusOK, s.sessionView(r.Context(), sess.UserID, sess.Username, sess.Role, sess.CSRF, sess.MFA))
+	writeJSON(w, http.StatusOK, s.sessionView(r.Context(), sess.UserID, sess.Username, sess.Role, sess.CSRF, sess.AuthMethod, sess.MFA))
 }

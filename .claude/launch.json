@@ -1,0 +1,31 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "docker",
+      "runtimeArgs": [
+        "run", "--rm", "--name", "dbyson-dev-api",
+        "-p", "127.0.0.1:18080:8080",
+        "-v", "D:/Proyectos/DByson:/src",
+        "-v", "dbyson-gomod:/go/pkg/mod",
+        "-v", "dbyson-gocache:/root/.cache/go-build",
+        "-v", "dbyson-devdata:/data",
+        "-e", "DBYSON_LISTEN=0.0.0.0:8080",
+        "-e", "DBYSON_DATA_DIR=/data",
+        "--add-host", "host.docker.internal:host-gateway",
+        "-w", "/src",
+        "golang:1.26-alpine",
+        "go", "run", "./cmd/dbyson"
+      ],
+      "port": 18080
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "web", "run", "dev", "--", "--port", "5173", "--strictPort"],
+      "env": { "DBYSON_API_URL": "http://127.0.0.1:18080" },
+      "port": 5173
+    }
+  ]
+}

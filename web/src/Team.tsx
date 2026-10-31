@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, type TeamRole, type TeamUser } from "./api";
+import { ActionMenu } from "./ActionMenu";
 import { Dialog } from "./Dialog";
 import { Select } from "./Select";
 import { useConfirm } from "./Confirm";
@@ -323,23 +324,9 @@ export function TeamDialog({ username: currentUsername, onClose }: { username: s
                     <div className="member-name">
                       <strong>{user.username}</strong>
                       {self && <span className="count-badge">Tú</span>}
+                      {lastAdmin && <span className="count-badge">Última administración</span>}
                     </div>
-                    <span className="muted member-detail">
-                      {user.email || ROLE_LABELS[user.role]}
-                      {lastAdmin ? " · Última administración" : ""}
-                    </span>
-                    <button
-                      className="member-email-button"
-                      disabled={busy}
-                      aria-label={`Vincular correo de ${user.username}`}
-                      onClick={() => {
-                        setLinking(user);
-                        setEmail(user.email ?? "");
-                        setEmailError("");
-                      }}
-                    >
-                      {user.email ? "Cambiar correo" : "Vincular correo"}
-                    </button>
+                    <span className="muted member-detail">{user.email || "Sin correo vinculado"}</span>
                   </div>
                 </div>
                 <span className={`member-status${user.disabled ? " inactive" : ""}`}>
@@ -352,56 +339,62 @@ export function TeamDialog({ username: currentUsername, onClose }: { username: s
                   disabled={busy || lastAdmin}
                   onChange={(value) => void changeRole(user, value as TeamRole)}
                 />
-                <div className="team-actions">
-                  <button
-                    disabled={busy}
-                    aria-label={`Cambiar contraseña de ${user.username}`}
-                    onClick={() => {
-                      setResetting(user);
-                      setNextPassword("");
-                      setShowPassword(false);
-                      setResetError("");
-                    }}
-                  >
-                    Contraseña
-                  </button>
-                  <button
-                    disabled={busy || self || lastAdmin}
-                    title={self ? "No puedes deshabilitar tu cuenta" : lastAdmin ? "Debe quedar una administración activa" : undefined}
-                    onClick={async () => {
-                      if (
-                        !user.disabled &&
-                        !(await confirm(
-                          `¿Deshabilitar a «${user.username}»? Se cerrarán sus sesiones y no podrá entrar hasta que habilites la cuenta de nuevo.`,
-                        ))
-                      )
-                        return;
-                      await act(
-                        () => api("PUT", `/api/users/${user.id}`, { disabled: !user.disabled }),
-                        `Cuenta de ${user.username} ${user.disabled ? "habilitada" : "deshabilitada"}.`,
-                      );
-                    }}
-                  >
-                    {user.disabled ? "Habilitar" : "Deshabilitar"}
-                  </button>
-                  <button
-                    className="danger team-delete"
-                    disabled={busy || self || lastAdmin}
-                    aria-label={`Eliminar a ${user.username}`}
-                    title={self ? "No puedes eliminar tu cuenta" : lastAdmin ? "Debe quedar una administración activa" : "Eliminar cuenta"}
-                    onClick={async () => {
-                      if (
-                        !(await confirm(
-                          `¿Eliminar permanentemente la cuenta de «${user.username}»? Se eliminarán sus conexiones privadas y sus permisos. Esta acción no se puede deshacer.`,
-                        ))
-                      )
-                        return;
-                      await act(() => api("DELETE", `/api/users/${user.id}`), `Cuenta de ${user.username} eliminada.`);
-                    }}
-                  >
-                    Eliminar
-                  </button>
-                </div>
+                <ActionMenu
+                  label={`Acciones para ${user.username}`}
+                  title={`Correo, contraseña y estado de ${user.username}`}
+                  actions={[
+                    {
+                      label: user.email ? "Cambiar correo" : "Vincular correo",
+                      disabled: busy,
+                      onClick: () => {
+                        setLinking(user);
+                        setEmail(user.email ?? "");
+                        setEmailError("");
+                      },
+                    },
+                    {
+                      label: "Cambiar contraseña",
+                      disabled: busy,
+                      onClick: () => {
+                        setResetting(user);
+                        setNextPassword("");
+                        setShowPassword(false);
+                        setResetError("");
+                      },
+                    },
+                    {
+                      label: user.disabled ? "Habilitar cuenta" : "Deshabilitar cuenta",
+                      disabled: busy || self || lastAdmin,
+                      onClick: async () => {
+                        if (
+                          !user.disabled &&
+                          !(await confirm(
+                            `¿Deshabilitar a «${user.username}»? Se cerrarán sus sesiones y no podrá entrar hasta que habilites la cuenta de nuevo.`,
+                          ))
+                        )
+                          return;
+                        await act(
+                          () => api("PUT", `/api/users/${user.id}`, { disabled: !user.disabled }),
+                          `Cuenta de ${user.username} ${user.disabled ? "habilitada" : "deshabilitada"}.`,
+                        );
+                      },
+                    },
+                    {
+                      label: "Eliminar cuenta",
+                      danger: true,
+                      disabled: busy || self || lastAdmin,
+                      onClick: async () => {
+                        if (
+                          !(await confirm(
+                            `¿Eliminar permanentemente la cuenta de «${user.username}»? Se eliminarán sus conexiones privadas y sus permisos. Esta acción no se puede deshacer.`,
+                          ))
+                        )
+                          return;
+                        await act(() => api("DELETE", `/api/users/${user.id}`), `Cuenta de ${user.username} eliminada.`);
+                      },
+                    },
+                  ]}
+                />
               </li>
             );
           })}

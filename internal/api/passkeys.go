@@ -113,7 +113,17 @@ func (s *Server) passkeyPassword(w http.ResponseWriter, r *http.Request, passwor
 		return false
 	}
 	ok := false
-	if len(password) <= auth.MaxPasswordLen {
+	if password == "" && sess.AuthMethod == auth.AuthSSO {
+		// Same rule as 2FA changes: a recent SSO sign-in stands in for the password.
+		if !ssoReauthFresh(sess) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "Por seguridad, vuelve a confirmar tu identidad con tu proveedor de inicio de sesión.",
+				"code":  reauthRequiredCode,
+			})
+			return false
+		}
+		ok = true
+	} else if len(password) <= auth.MaxPasswordLen {
 		ok, _ = auth.VerifyPassword(password, hash)
 	}
 	if !ok {
@@ -359,5 +369,5 @@ func (s *Server) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.record(r.Context(), audit.Entry{Action: "auth.passkey.login", UserID: u.id, Username: u.name, IP: s.clientIP(r), Outcome: audit.OutcomeOK})
-	s.startSession(w, r, u.id, u.name, u.role, true)
+	s.startSession(w, r, u.id, u.name, u.role, auth.AuthPasskey, true)
 }
